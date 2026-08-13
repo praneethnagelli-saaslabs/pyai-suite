@@ -41,7 +41,9 @@ export function localDealNotes(
   const nextSteps = lines.flatMap((l) => stepFrom(l)).slice(0, 6);
 
   const customerPresent = participants.some((p) => p.role === "Customer");
-  const oneSided = participants.length <= 1 || (participants[0]?.pct ?? 0) >= 99;
+  const totalTalk = participants.reduce((sum, p) => sum + p.talkSeconds, 0);
+  const leadShare = totalTalk > 0 ? (participants[0]?.talkSeconds ?? 0) / totalTalk : 1;
+  const oneSided = participants.length <= 1 || leadShare >= 0.99;
 
   const risks: CallAnalysis["risks"] = [];
   const seed = lines[0] ?? { speaker: "Unknown", text: rawText.slice(0, 120), start: 0, end: 0 };
