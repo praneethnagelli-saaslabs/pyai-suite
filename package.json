@@ -17,7 +17,8 @@
     "test": "turbo run test",
     "eval": "turbo run eval --filter=@pyai/evals",
     "benchmark": "turbo run benchmark",
-    "clean": "turbo run clean"
+    "clean": "turbo run clean",
+    "docker:sync": "sh scripts/docker-sync.sh"
   },
   "devDependencies": {
     "@biomejs/biome": "1.9.4",

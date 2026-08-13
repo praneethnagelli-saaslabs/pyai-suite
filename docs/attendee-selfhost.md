@@ -6,12 +6,20 @@ Attendee is part of the **main** Docker Compose stack (not optional).
 
 ```bash
 cp .env.example .env
-docker compose up --build -d
+pnpm docker:sync    # or: sh scripts/docker-sync.sh
 ```
+
+Run that after every `git pull`. It rebuilds api/web/worker and only builds Attendee if `pyai-attendee:local` is missing.
 
 Services include `attendee-app` (:8000), `attendee-worker`, `attendee-scheduler`, plus its own Postgres/Redis.
 
-First build pulls Attendee from GitHub (~5+ minutes, `linux/amd64`).
+First build compiles Attendee + Chrome from GitHub once (~5–10 min, `linux/amd64`) and tags it `pyai-attendee:local`. Worker and scheduler reuse that image. After that, rebuild only the suite with:
+
+```bash
+docker compose up --build -d --no-deps api web worker
+```
+
+To force a fresh Attendee image: `docker compose build --no-cache attendee-app`.
 
 ## Connect CallIQ
 

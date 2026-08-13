@@ -63,6 +63,8 @@ services:
     restart: "no"
 
   # ---- Attendee (CallIQ meeting bots) — always on with the suite ----
+  # Built once as pyai-attendee:local (Chrome/Ubuntu, first pull ~5–10 min).
+  # Worker + scheduler reuse that image — do not give them their own build.
   attendee-postgres:
     image: postgres:15.3-alpine
     environment:
@@ -103,10 +105,13 @@ services:
     restart: "no"
 
   attendee-app:
+    image: pyai-attendee:local
     platform: linux/amd64
     build:
       context: https://github.com/attendee-labs/attendee.git#main
       dockerfile: Dockerfile
+      tags:
+        - pyai-attendee:local
     ports:
       - "8000:8000"
     env_file:
@@ -163,10 +168,9 @@ services:
     restart: unless-stopped
 
   attendee-worker:
+    image: pyai-attendee:local
     platform: linux/amd64
-    build:
-      context: https://github.com/attendee-labs/attendee.git#main
-      dockerfile: Dockerfile
+    pull_policy: never
     env_file:
       - .env
     environment:
@@ -195,10 +199,9 @@ services:
     shm_size: "2gb"
 
   attendee-scheduler:
+    image: pyai-attendee:local
     platform: linux/amd64
-    build:
-      context: https://github.com/attendee-labs/attendee.git#main
-      dockerfile: Dockerfile
+    pull_policy: never
     env_file:
       - .env
     environment:

@@ -26,7 +26,9 @@ Or with Docker:
 
 ```bash
 cp .env.example .env
-docker compose up --build
+# After clone, and after every git pull:
+pnpm docker:sync
+# same as: sh scripts/docker-sync.sh
 # open http://localhost:3000
 # Attendee starts first, mints a local API key, and the suite API loads it automatically
 # Attendee UI: http://localhost:8000  (calliq@local.test / pyai-local-dev-only)
