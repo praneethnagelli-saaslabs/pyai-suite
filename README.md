@@ -29,6 +29,7 @@ cp .env.example .env
 # After clone, and after every git pull:
 pnpm docker:sync
 # same as: sh scripts/docker-sync.sh
+# Attendee+Chrome is pulled from GHCR (no 5–10 min local Chrome build)
 # open http://localhost:3000
 # Attendee starts first, mints a local API key, and the suite API loads it automatically
 # Attendee UI: http://localhost:8000  (calliq@local.test / pyai-local-dev-only)
@@ -116,7 +117,7 @@ CI runs without real provider credentials.
 - [Demo mode](docs/demo-mode.md)
 - [Meeting bots (CallIQ)](docs/meeting-bots.md)
 - [Chrome extension](apps/extension/README.md)
-- [Self-host Attendee](docs/attendee-selfhost.md) (included in main `docker compose up`)
+- [Self-host Attendee](docs/attendee-selfhost.md) (GHCR image + main `docker compose up`)
 - [PyAI Quickstart](https://docs.pyai.com/quickstart)
 
 ## License

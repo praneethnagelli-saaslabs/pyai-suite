@@ -1,0 +1,75 @@
+name: Publish Attendee image
+
+# Builds upstream Attendee (Chrome) once and pushes to GHCR so clones
+# `docker pull` instead of compiling Chrome locally.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+  push:
+    branches: [main, master]
+    paths:
+      - ".github/workflows/attendee-image.yml"
+      - "docker-compose.yml"
+      - "scripts/docker-sync.sh"
+
+concurrency:
+  group: attendee-image-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image name
+        run: |
+          repo="$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          echo "IMAGE=ghcr.io/${repo}/attendee" >> "$GITHUB_ENV"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: https://github.com/attendee-labs/attendee.git#main
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+      - name: Make GHCR package public (teammates can pull without login)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pkg="attendee"
+          owner="${{ github.repository_owner }}"
+          repo="${{ github.event.repository.name }}"
+          # Linked package name is often "pyai-suite/attendee"
+          for name in "${repo}/attendee" "attendee"; do
+            gh api --method PUT \
+              -H "Accept: application/vnd.github+json" \
+              "/orgs/${owner}/packages/container/${name}/visibility" \
+              -f visibility=public && exit 0
+            gh api --method PUT \
+              -H "Accept: application/vnd.github+json" \
+              "/user/packages/container/${name}/visibility" \
+              -f visibility=public && exit 0
+          done
+          echo "Set the package to Public in GitHub → Packages if pulls require login."
+          exit 0

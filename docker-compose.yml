@@ -1,3 +1,9 @@
+# Prebuilt Chrome/Attendee image (GHCR). Override with ATTENDEE_IMAGE in .env.
+# First-time setup should `docker pull` this instead of building from source.
+x-attendee-image: &attendee-image
+  image: ${ATTENDEE_IMAGE:-ghcr.io/praneethnagelli-saaslabs/pyai-suite/attendee:latest}
+  platform: linux/amd64
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -105,13 +111,11 @@ services:
     restart: "no"
 
   attendee-app:
-    image: pyai-attendee:local
-    platform: linux/amd64
+    <<: *attendee-image
+    pull_policy: ${ATTENDEE_PULL_POLICY:-missing}
     build:
       context: https://github.com/attendee-labs/attendee.git#main
       dockerfile: Dockerfile
-      tags:
-        - pyai-attendee:local
     ports:
       - "8000:8000"
     env_file:
@@ -168,9 +172,8 @@ services:
     restart: unless-stopped
 
   attendee-worker:
-    image: pyai-attendee:local
-    platform: linux/amd64
-    pull_policy: never
+    <<: *attendee-image
+    pull_policy: ${ATTENDEE_PULL_POLICY:-missing}
     env_file:
       - .env
     environment:
@@ -199,9 +202,8 @@ services:
     shm_size: "2gb"
 
   attendee-scheduler:
-    image: pyai-attendee:local
-    platform: linux/amd64
-    pull_policy: never
+    <<: *attendee-image
+    pull_policy: ${ATTENDEE_PULL_POLICY:-missing}
     env_file:
       - .env
     environment:

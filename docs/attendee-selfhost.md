@@ -9,17 +9,19 @@ cp .env.example .env
 pnpm docker:sync    # or: sh scripts/docker-sync.sh
 ```
 
-Run that after every `git pull`. It rebuilds api/web/worker and only builds Attendee if `pyai-attendee:local` is missing.
+Run that after every `git pull`. It rebuilds api/web/worker and **pulls** the Attendee+Chrome image from GHCR when possible (`ghcr.io/praneethnagelli-saaslabs/pyai-suite/attendee:latest`). Local Chrome compile is only the fallback if the pull fails.
 
-Services include `attendee-app` (:8000), `attendee-worker`, `attendee-scheduler`, plus its own Postgres/Redis.
+Services include `attendee-app` (:8000), `attendee-worker`, `attendee-scheduler`, plus its own Postgres/Redis. All three reuse the same image (`linux/amd64`).
 
-First build compiles Attendee + Chrome from GitHub once (~5–10 min, `linux/amd64`) and tags it `pyai-attendee:local`. Worker and scheduler reuse that image. After that, rebuild only the suite with:
+After Attendee is cached, rebuild only the suite with:
 
 ```bash
 docker compose up --build -d --no-deps api web worker
 ```
 
-To force a fresh Attendee image: `docker compose build --no-cache attendee-app`.
+To force a fresh Attendee image: `docker pull ghcr.io/praneethnagelli-saaslabs/pyai-suite/attendee:latest` or `docker compose build --no-cache attendee-app`.
+
+The GHCR package must be **public** (GitHub → Packages → attendee → Change visibility) so teammates can pull without a token. CI workflow `.github/workflows/attendee-image.yml` publishes it on demand / weekly / when compose sync files change.
 
 ## Connect CallIQ
 
