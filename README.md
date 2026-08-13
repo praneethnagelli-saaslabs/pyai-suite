@@ -71,7 +71,7 @@ Unpacked MV3 in `apps/extension` — CallIQ bot join, Brief Meet capture, and Sc
 |-----|-----|
 | **CallIQ** | Popup → **Start call with CallIQ Bot** or **Bring bot into this Meet**. Stay in Meet — transcript is in the CallIQ **side panel** (not a new tab). Admit **one** CallIQ Bot. |
 | **Brief** | Popup → **Open Meet + Brief**, or join Meet first → **Capture this Meet in Brief**. In Brief, share the Meet tab with tab audio on (no bot). |
-| **Scrib** | Hold **Control+Shift+1** (⌃, not ⌘), speak, release to paste. Or hold **Hold to talk** in the popup. |
+| **Scrib** | Hold **Control+Shift+1** (⌃, not ⌘), speak, release to paste. Desktop bezel shows Listening → Understanding. |
 
 Reload the extension after every code change. More detail: [apps/extension/README.md](apps/extension/README.md). Provider keys stay in API `.env` — the extension never sees them.
 
@@ -81,7 +81,7 @@ Reload the extension after every code change. More detail: [apps/extension/READM
 apps/api              Fastify API (+ /api/jobs, /ws/runs)
 apps/web              React + Vite UI (all four products)
 apps/extension        Chrome MV3 (CallIQ bot, Brief capture, Scrib dictation)
-apps/desktop          Tauri bridge scaffold
+apps/desktop          macOS menu-bar Scrib (Tauri tray)
 apps/worker           Async jobs (memory or BullMQ/Redis)
 packages/core         Registry, workflows, gates, budget, tracer, PyAI adapter
 packages/db           Run store (memory or Postgres)
@@ -103,6 +103,8 @@ pnpm typecheck
 pnpm test
 pnpm eval
 pnpm --filter @pyai/web build
+pnpm --filter @pyai/desktop dev    # macOS tray Scrib — grant PyAI Scrib in Accessibility + Microphone
+# details: apps/desktop/README.md
 ```
 
 CI runs without real provider credentials.

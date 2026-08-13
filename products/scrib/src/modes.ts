@@ -1,6 +1,6 @@
 /**
- * Cleanup modes + tab context for the cleaner (spec #34, #35).
- * No hostname allowlist: the focused field + page title/host go to the LLM.
+ * Cleanup modes + insert-target context (spec #34, #35).
+ * The cleaner is app-aware: we pass the frontmost app (and optional tab/field) into the prompt.
  */
 
 export type CleanupMode = "raw" | "light" | "professional" | "concise" | "custom";
@@ -21,20 +21,20 @@ export interface TabContext {
   path?: string;
   title?: string;
   field?: ScribFieldKind | string;
+  bundleId?: string;
 }
 
 export interface AppModeRule {
   id: string;
-  /** @deprecated Kept for eval fixtures; runtime cleanup does not map hosts. */
   match: string;
   mode: CleanupMode;
   hint: string;
 }
 
-/** @deprecated Not used at runtime. Eval / demo fixtures may still mention apps. */
+/** @deprecated App name is sent to the cleaner instead of a host map. */
 export const DEFAULT_APP_MODES: AppModeRule[] = [];
 
-/** @deprecated Host matching is not how Scrib chooses cleanup. */
+/** @deprecated The cleaner receives `appName` directly. */
 export function resolveAppMode(
   _appName: string | undefined,
   _rules: AppModeRule[] = DEFAULT_APP_MODES,
@@ -67,8 +67,9 @@ export function sanitizeTabContext(raw: unknown): TabContext | undefined {
   const host = clip(o.host, 200);
   const path = clip(o.path, 200);
   const title = clip(o.title, 200);
-  if (!host && !path && !title && !field) return undefined;
-  return { host, path, title, field };
+  const bundleId = clip(o.bundleId ?? o.bundle_id, 200);
+  if (!host && !path && !title && !field && !bundleId) return undefined;
+  return { host, path, title, field, bundleId };
 }
 
 export function isCodeField(field?: string): boolean {
@@ -77,11 +78,11 @@ export function isCodeField(field?: string): boolean {
 
 export function formatTabContext(ctx?: TabContext, appName?: string): string {
   const parts: string[] = [];
+  if (appName) parts.push(`app: ${clip(appName, 200)}`);
   if (ctx?.host) parts.push(`host: ${ctx.host}`);
   if (ctx?.path) parts.push(`path: ${ctx.path}`);
-  if (ctx?.title) parts.push(`title: ${ctx.title}`);
+  if (ctx?.title && ctx.title !== appName) parts.push(`title: ${ctx.title}`);
   if (ctx?.field && ctx.field !== "unknown") parts.push(`field: ${ctx.field}`);
-  if (!parts.length && appName) parts.push(`app: ${clip(appName, 200)}`);
   return parts.join("\n") || "unknown page";
 }
 
@@ -96,14 +97,21 @@ const CLEANUP_GUARDRAILS = [
   "Output ONLY the cleaned transcript text with no quotes, labels, or preamble.",
 ].join(" ");
 
-const CONTEXT_STYLE = [
-  "Infer how to clean from the insert target (page title/host and field type). Do not look up a site list.",
-  "Code editor / compiler / IDE (Ace, Monaco, CodeMirror, or a page that is clearly an editor): keep programming tokens, quotes, symbols, and identifiers as spoken. Do not rewrite into a prose sentence. Example: echo \"hello world\" stays that code, not Hello world.",
-  "Email compose: light professional polish. Same facts.",
-  "Documents, notes, chat, or unknown fields: light cleanup only (punctuation, capitalization, drop uh/um/like). Preserve wording.",
+const APP_AWARE_STYLE = [
+  "Clean for the insert app named below. Infer the surface from that app name.",
+  "Chat (Slack, Messages, Discord, Teams, WhatsApp): light cleanup, keep casual tone and @mentions. Do not make it an email.",
+  "Email (Mail, Outlook, Spark, Gmail): light professional polish. Same facts. No greeting or sign-off unless spoken.",
+  "Code / terminal (VS Code, Cursor, Xcode, Terminal, iTerm, Warp): keep tokens, flags, paths, quotes, and commands. Do not rewrite into prose.",
+  "Notes / docs (Notes, TextEdit, Word, Pages, Notion, Obsidian): light cleanup only. Preserve wording.",
+  "Unknown app: light cleanup only (punctuation, capitalization, drop uh/um/like). Preserve wording.",
 ].join(" ");
 
-export function cleanupSystemPrompt(mode: CleanupMode, hint?: string, ctx?: TabContext): string {
+export function cleanupSystemPrompt(
+  mode: CleanupMode,
+  hint?: string,
+  ctx?: TabContext,
+  appName?: string,
+): string {
   const style = (() => {
     switch (mode) {
       case "raw":
@@ -116,10 +124,10 @@ export function cleanupSystemPrompt(mode: CleanupMode, hint?: string, ctx?: TabC
         return `Style hint: ${hint ?? "clean lightly"}. Preserve intent and all facts. Do not add new content.`;
       case "light":
       default:
-        return CONTEXT_STYLE;
+        return APP_AWARE_STYLE;
     }
   })();
-  const target = formatTabContext(ctx);
+  const target = formatTabContext(ctx, appName);
   return `${CLEANUP_GUARDRAILS} Insert target:\n${target}\n${style}`;
 }
 

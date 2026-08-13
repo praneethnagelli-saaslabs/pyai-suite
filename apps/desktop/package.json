@@ -4,10 +4,13 @@
   "private": true,
   "type": "module",
   "license": "MIT",
-  "description": "Tauri desktop shell for Scrib + Brief (hotkeys, audio capture, secure storage).",
+  "description": "macOS menu-bar Scrib — hold Control+Shift+1, release to paste.",
   "scripts": {
-    "dev": "echo 'Install Rust + Tauri CLI, then: cargo tauri dev (see README)'",
-    "build": "echo 'Desktop scaffold — run cargo tauri build when Rust toolchain is available'",
+    "dev": "bash scripts/start.sh",
+    "quit": "bash scripts/quit.sh",
+    "tauri:dev": "PATH=\"$HOME/.cargo/bin:$PATH\" tauri dev",
+    "tauri:build": "PATH=\"$HOME/.cargo/bin:$PATH\" tauri build --bundles app",
+    "build": "echo 'Desktop app is macOS-only; use pnpm --filter @pyai/desktop tauri:build (requires Rust)'",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "biome check src",
     "test": "vitest run",
@@ -17,6 +20,7 @@
     "@pyai/scrib": "workspace:*"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.8.0",
     "@types/node": "^22.10.0",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"

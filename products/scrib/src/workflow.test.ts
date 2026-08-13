@@ -5,6 +5,12 @@ import { PersonalDictionary } from "./dictionary.js";
 import { cleanupUserMessage, formatTabContext, isCodeField, sanitizeTabContext } from "./modes.js";
 
 describe("Scrib", () => {
+  it("sends the frontmost app name to the cleaner", () => {
+    const msg = cleanupUserMessage("hey uh send this", undefined, "Slack");
+    expect(msg).toContain("app: Slack");
+    expect(msg).toContain("hey uh send this");
+  });
+
   it("sends tab context to the cleaner without host mapping", () => {
     const ctx = sanitizeTabContext({
       host: "www.programiz.com",

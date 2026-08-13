@@ -54,7 +54,8 @@ export function buildScribWorkflow(
   platform: Platform,
   input: ScribInput,
 ): { def: WorkflowDef; getArtifact: () => ScribArtifact } {
-  const tabContext = sanitizeTabContext(input.tabContext) ?? sanitizeTabContext({ title: input.appName });
+  const appName = input.appName?.replace(/[\u0000-\u001f]/g, " ").trim().slice(0, 200) || undefined;
+  const tabContext = sanitizeTabContext(input.tabContext) ?? sanitizeTabContext({ title: appName });
   const mode: CleanupMode = input.mode ?? "light";
   const dict = new PersonalDictionary();
   for (const e of input.dictionary ?? []) dict.add(e);
@@ -152,8 +153,8 @@ export function buildScribWorkflow(
             try {
               const res = await llm().complete({
                 messages: [
-                  { role: "system", content: cleanupSystemPrompt(mode, input.customHint, tabContext) },
-                  { role: "user", content: cleanupUserMessage(dictated, tabContext, input.appName) },
+                  { role: "system", content: cleanupSystemPrompt(mode, input.customHint, tabContext, appName) },
+                  { role: "user", content: cleanupUserMessage(dictated, tabContext, appName) },
                 ],
                 temperature: 0.1,
                 maxTokens: 1024,
@@ -186,7 +187,7 @@ export function buildScribWorkflow(
         raw,
         cleaned: cleaned || dict.apply(raw),
         mode,
-        appRuleId: undefined,
+        appRuleId: appName,
         latency: { ...latency },
         sttProvider,
         cleanupProvider,

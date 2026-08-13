@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>PyAI Scrib</string>
+  <key>CFBundleDisplayName</key>
+  <string>PyAI Scrib</string>
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Scrib records while you hold Control+Shift+1, then inserts the cleaned transcript at the caret.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Scrib detects the frontmost app so cleanup can match what you are typing into.</string>
+</dict>
+</plist>

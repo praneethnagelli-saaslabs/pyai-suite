@@ -13,3 +13,5 @@ coverage/
 data/
 .data/
 *.db
+target/
+apps/desktop/src-tauri/gen/

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Web UI brand mark: ink-900 tile + Lucide Mic2 (Scrib / sidebar). -->
+  <rect width="1024" height="1024" rx="224" fill="#111b26"/>
+  <g
+    fill="none"
+    stroke="#ffffff"
+    stroke-width="72"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    transform="translate(128 128) scale(32)"
+  >
+    <path d="m12 8-9.04 9.06a2.82 2.82 0 1 0 3.98 3.98L16 12"/>
+    <circle cx="17" cy="7" r="5"/>
+  </g>
+</svg>

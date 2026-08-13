@@ -1,7 +1,8 @@
 /**
  * Desktop bridge contract (spec #70).
- * Rust/Tauri owns: global hotkeys, mic/system audio, clipboard, secure storage.
- * This TS module is the IPC surface the React UI talks to.
+ * The macOS tray app in src-tauri implements these invoke names.
+ * Rust owns: PTT hotkeys, mic capture, clipboard insert. Keys stay in the API.
+ * This TS module is the IPC surface a future webview UI can talk to.
  */
 
 export type DesktopCapability =

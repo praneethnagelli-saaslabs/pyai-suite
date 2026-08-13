@@ -1,14 +1,26 @@
 [package]
 name = "pyai-desktop"
 version = "0.1.0"
-description = "PyAI Suite desktop shell (WhisperFlow + OpenGranola)"
+description = "PyAI Suite menu-bar Scrib"
 edition = "2021"
 license = "MIT"
 
-# Minimal bin so `cargo run` works without the full Tauri toolchain.
-# For the real shell: add tauri 2 + tauri-build, then `cargo tauri dev`
-# (see tauri.conf.json and bridge.ts invoke names).
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
 
-[[bin]]
-name = "pyai-desktop"
-path = "src/main.rs"
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+cpal = "0.15"
+hound = "3.5"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+arboard = "3"
+enigo = "0.3"
+base64 = "0.22"
+macos-accessibility-client = "0.0.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString"] }
+objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSRunningApplication", "NSScreen"] }
