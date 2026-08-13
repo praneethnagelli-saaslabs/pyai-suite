@@ -8,8 +8,8 @@
  *   - any element exposing a live Selection/Range
  *
  * There are NO host/hostname branches, NO site-specific selectors, and NO
- * per-domain insertion hacks anywhere in this file. Site-specific *behavior*
- * (app-aware cleanup modes) is configuration evaluated elsewhere, never here.
+ * per-domain insertion hacks anywhere in this file. Cleanup style comes from
+ * the focused field + tab context sent to the cleaner, never a host map.
  *
  * The extension background worker uses this to insert text; provider API keys
  * are NEVER touched here (see docs/security.md — secrets live in secure native

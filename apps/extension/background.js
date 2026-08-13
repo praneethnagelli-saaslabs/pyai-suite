@@ -37,7 +37,7 @@ async function getWebBase() {
   return stored.webBase || DEFAULT_WEB;
 }
 
-async function dictate(rawText, appName) {
+async function dictate(rawText, appName, tabContext) {
   const apiBase = await getApiBase();
   const res = await fetch(`${apiBase}/api/scrib/dictate`, {
     method: "POST",
@@ -45,14 +45,99 @@ async function dictate(rawText, appName) {
     body: JSON.stringify({
       rawText,
       appName,
-      mode: "light",
+      ...(tabContext ? { tabContext } : {}),
     }),
   });
   if (!res.ok) throw new Error(`dictate failed: ${res.status}`);
   return res.json();
 }
 
-async function transcribe(audioBase64, format, appName) {
+async function pingOffscreen() {
+  try {
+    const r = await chrome.runtime.sendMessage({ type: "scrib.offscreen.ping" });
+    return Boolean(r?.ok);
+  } catch {
+    return false;
+  }
+}
+
+async function ensureOffscreen() {
+  if (await pingOffscreen()) return;
+  try {
+    await chrome.offscreen.createDocument({
+      url: "offscreen.html",
+      reasons: ["USER_MEDIA"],
+      justification: "Scrib dictation uses the microphone without opening a tab",
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!/already exists|Only a single offscreen/i.test(msg)) throw e;
+  }
+  for (let i = 0; i < 20; i++) {
+    if (await pingOffscreen()) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error("Scrib recorder failed to start. Reload the extension.");
+}
+
+async function sendOffscreen(msg) {
+  await ensureOffscreen();
+  let lastErr = new Error("Scrib recorder is not ready. Reload the extension.");
+  for (let i = 0; i < 6; i++) {
+    try {
+      const out = await chrome.runtime.sendMessage(msg);
+      if (out) return out;
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+      await new Promise((r) => setTimeout(r, 80));
+      await ensureOffscreen();
+    }
+  }
+  throw lastErr;
+}
+
+async function setScribStatus(state, detail) {
+  const row = { at: Date.now(), state, detail };
+  await chrome.storage.local.set({ scribStatus: row });
+  const badge =
+    state === "listening" ? "ON" : state === "busy" ? "…" : state === "ok" ? "✓" : state === "copy" ? "⌘V" : state === "error" ? "!" : "";
+  const color =
+    state === "error" ? "#b91c1c" : state === "ok" ? "#15803d" : state === "listening" ? "#0f766e" : "#4a6078";
+  await chrome.action.setBadgeText({ text: badge });
+  await chrome.action.setBadgeBackgroundColor({ color });
+  await chrome.action.setTitle({
+    title: detail ? `PyAI Suite — ${detail}` : "PyAI Suite",
+  });
+}
+
+function tabAppContext(tab, field) {
+  let host = "";
+  let path = "";
+  try {
+    const u = new URL(tab?.url || "");
+    host = u.hostname || "";
+    path = u.pathname || "";
+  } catch {
+    /* ignore */
+  }
+  const title = typeof tab?.title === "string" ? tab.title.slice(0, 200) : "";
+  const appName = [host, path, title].filter(Boolean).join(" ").trim() || "browser";
+  return {
+    appName,
+    tabContext: {
+      host: host || undefined,
+      path: path || undefined,
+      title: title || undefined,
+      field: field || "unknown",
+    },
+  };
+}
+
+function insertTextFromTranscript(out) {
+  return out?.cleaned || out?.transcript || out?.raw || "";
+}
+
+async function transcribe(audioBase64, format, appName, tabContext) {
   const apiBase = await getApiBase();
   const res = await fetch(`${apiBase}/api/scrib/transcribe`, {
     method: "POST",
@@ -61,18 +146,293 @@ async function transcribe(audioBase64, format, appName) {
       audioBase64,
       format: format || "webm",
       appName,
-      mode: "light",
+      ...(tabContext ? { tabContext } : {}),
     }),
   });
   if (!res.ok) throw new Error(`transcribe failed: ${res.status}`);
   return res.json();
 }
 
-async function insertIntoActiveTab(text) {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) throw new Error("no active tab");
-  return chrome.tabs.sendMessage(tab.id, { type: "scrib.insert", text });
+function isRestrictedUrl(url) {
+  return !url || /^(chrome|chrome-extension|edge|about|devtools|view-source):/i.test(url);
 }
+
+async function getInsertTab() {
+  const wins = await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] });
+  const preferred = wins.find((w) => w.focused) ?? wins[0];
+  const tab = preferred?.tabs?.find((t) => t.active) ?? preferred?.tabs?.[0];
+  if (tab?.id != null) return tab;
+  const [fallback] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  return fallback ?? null;
+}
+
+function withTimeout(promise, ms, fallback) {
+  let timer;
+  return Promise.race([
+    Promise.resolve(promise).finally(() => clearTimeout(timer)),
+    new Promise((resolve) => {
+      timer = setTimeout(() => resolve(fallback), ms);
+    }),
+  ]);
+}
+
+async function rememberInsertTarget(tabId) {
+  const results = await withTimeout(
+    chrome.scripting
+      .executeScript({
+        target: { tabId, allFrames: true },
+        world: "MAIN",
+        files: ["insert.js"],
+      })
+      .then(() =>
+        chrome.scripting.executeScript({
+          target: { tabId, allFrames: true },
+          world: "MAIN",
+          func: () => globalThis.__pyaiLockCaret?.() || globalThis.__pyaiCaretMeta?.() || null,
+        }),
+      ),
+    1500,
+    undefined,
+  ).catch(() => undefined);
+  const hit = results?.find((r) => r?.result?.field && r.result.field !== "unknown")?.result
+    || results?.find((r) => r?.result?.field)?.result;
+  return hit?.field || "unknown";
+}
+
+async function runInsert(tabId, text, world) {
+  const attempt = async () => {
+    await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      world,
+      files: ["insert.js"],
+    });
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      world,
+      func: (value) => globalThis.__pyaiInsertText?.(value) ?? { ok: false },
+      args: [text],
+    });
+    return Boolean(results?.some((r) => r.result?.ok && r.result?.via !== "dedupe"));
+  };
+
+  return withTimeout(attempt(), 2500, false);
+}
+
+async function writeClipboard(text) {
+  const out = await sendOffscreen({ type: "scrib.offscreen.clipboard", text });
+  return Boolean(out?.ok);
+}
+
+async function insertIntoActiveTab(text) {
+  const tab = await getInsertTab();
+  if (!tab?.id) {
+    await writeClipboard(text);
+    throw new Error("Copied. Focus a text box and press ⌘V.");
+  }
+  if (isRestrictedUrl(tab.url)) {
+    const copied = await writeClipboard(text);
+    throw new Error(
+      copied
+        ? "Chrome pages can't receive dictation. Press ⌘V to paste."
+        : "Can't insert on Chrome settings / new tab. Open a website and try again.",
+    );
+  }
+
+  const copied = await writeClipboard(text);
+
+  try {
+    if (await runInsert(tab.id, text, "MAIN")) return { ok: true };
+  } catch {
+    /* isolated world next */
+  }
+  try {
+    if (await runInsert(tab.id, text, "ISOLATED")) return { ok: true };
+  } catch {
+    /* message next */
+  }
+
+  try {
+    await injectScrib(tab.id);
+    const sent = await withTimeout(
+      chrome.tabs.sendMessage(tab.id, { type: "scrib.insert", text }),
+      1500,
+      null,
+    );
+    if (sent?.ok) return { ok: true };
+  } catch {
+    /* ignore */
+  }
+
+  if (copied) return { ok: false, reason: "Copied — click the field and press ⌘V." };
+  throw new Error("Click in the field, then try again.");
+}
+
+let scribHotkeyOn = false;
+let scribPttStartedAt = 0;
+let scribPttStopping = false;
+let scribPttWanted = false;
+/** @type {{ appName: string, tabContext: { host?: string, path?: string, title?: string, field?: string } } | null} */
+let scribListenCtx = null;
+
+async function showScribHud(tabId, text) {
+  if (tabId == null) return;
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab || isRestrictedUrl(tab.url)) return;
+  await chrome.scripting
+    .executeScript({
+      target: { tabId, allFrames: false },
+      func: (msg) => {
+        let hud = document.querySelector("[data-pyai='scrib-hud']");
+        if (!msg) {
+          hud?.remove();
+          return;
+        }
+        if (!hud) {
+          hud = document.createElement("div");
+          hud.setAttribute("data-pyai", "scrib-hud");
+          hud.style.cssText =
+            "position:fixed;z-index:2147483647;left:50%;bottom:24px;transform:translateX(-50%);padding:8px 12px;border-radius:8px;background:#111b26;color:#f8fafc;font:12px/1.3 system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.2);pointer-events:none;";
+          document.documentElement.appendChild(hud);
+        }
+        hud.textContent = msg;
+      },
+      args: [text || ""],
+    })
+    .catch(() => undefined);
+}
+
+async function startScribHotkey() {
+  const tab = await getInsertTab();
+  let field = "unknown";
+  if (tab?.id) field = await rememberInsertTarget(tab.id);
+  scribListenCtx = tabAppContext(tab, field);
+  const where = [scribListenCtx.tabContext.host || "this tab", field !== "unknown" ? field : null]
+    .filter(Boolean)
+    .join(" · ");
+  await setScribStatus("busy", "Starting microphone…");
+  const out = await sendOffscreen({ type: "scrib.offscreen.start" });
+  if (out?.ok === false) {
+    await setScribStatus("error", out.reason || "Mic failed. Click Record in the popup once to allow the microphone.");
+    if (tab?.id) await showScribHud(tab.id, out.reason || "Mic failed");
+    return;
+  }
+  scribHotkeyOn = true;
+  scribPttStartedAt = Date.now();
+  await setScribStatus("listening", `Listening in ${where}… release to paste`);
+  if (tab?.id) {
+    await showScribHud(tab.id, `Listening in ${where}… release to paste`);
+    await armPttRelease(tab.id);
+  }
+}
+
+async function armPttRelease(tabId) {
+  await chrome.scripting
+    .executeScript({
+      target: { tabId, allFrames: true },
+      func: () => {
+        if (globalThis.__pyaiPttArmed) return;
+        globalThis.__pyaiPttArmed = true;
+        const ping = (msg) => {
+          try {
+            if (!chrome.runtime?.id) return;
+            chrome.runtime.sendMessage(msg, () => void chrome.runtime?.lastError);
+          } catch {
+            /* extension reloaded */
+          }
+        };
+        const release = (e) => {
+          const one = e.code === "Digit1" || e.code === "Numpad1" || e.key === "1";
+          const mod = e.key === "Control" || e.key === "Shift";
+          if (!one && !mod) return;
+          ping({ type: "scrib.ptt.up" });
+        };
+        window.addEventListener("keyup", release, true);
+        window.addEventListener("blur", () => ping({ type: "scrib.ptt.up" }));
+      },
+    })
+    .catch(() => undefined);
+}
+
+async function stopScribHotkey() {
+  scribHotkeyOn = false;
+  const tab = await getInsertTab();
+  await setScribStatus("busy", "Transcribing…");
+  if (tab?.id) await showScribHud(tab.id, "Transcribing…");
+  const clearSoon = async (state, msg) => {
+    await setScribStatus(state, msg);
+    if (tab?.id) await showScribHud(tab.id, msg);
+    setTimeout(() => {
+      void chrome.action.setBadgeText({ text: "" });
+      if (tab?.id) void showScribHud(tab.id, "");
+    }, 2800);
+  };
+  try {
+    const clip = await sendOffscreen({ type: "scrib.offscreen.stop" });
+    if (!clip?.ok || !clip.audioBase64) {
+      await clearSoon("error", clip?.reason || "No speech captured");
+      return;
+    }
+    const ctx = scribListenCtx || tabAppContext(tab);
+    scribListenCtx = null;
+    const out = await transcribe(clip.audioBase64, clip.format || "webm", ctx.appName, ctx.tabContext);
+    const text = insertTextFromTranscript(out);
+    if (!text) {
+      await clearSoon("error", "No speech. Speak while the badge says ON.");
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 80));
+    try {
+      const insert = await insertIntoActiveTab(text);
+      if (insert?.ok) {
+        await clearSoon("ok", "Pasted");
+        return;
+      }
+      await clearSoon("copy", insert?.reason || "Copied — press ⌘V");
+    } catch (e) {
+      await clearSoon("copy", e instanceof Error ? e.message : "Copied — press ⌘V");
+    }
+  } catch (e) {
+    await clearSoon("error", e instanceof Error ? e.message : "Dictation failed");
+  }
+}
+
+async function onScribPttDown(source) {
+  if (scribHotkeyOn || scribPttStopping) return;
+  scribPttWanted = true;
+  await setScribStatus("listening", `Hold to talk (${source})`);
+  try {
+    await startScribHotkey();
+    if (!scribPttWanted && scribHotkeyOn) await onScribPttUp();
+  } catch (e) {
+    scribHotkeyOn = false;
+    scribPttWanted = false;
+    await setScribStatus("error", e instanceof Error ? e.message : String(e));
+  }
+}
+
+async function onScribPttUp() {
+  scribPttWanted = false;
+  if (!scribHotkeyOn || scribPttStopping) return;
+  scribPttStopping = true;
+  try {
+    await stopScribHotkey();
+  } catch (e) {
+    scribHotkeyOn = false;
+    await setScribStatus("error", e instanceof Error ? e.message : String(e));
+  } finally {
+    scribPttStopping = false;
+  }
+}
+
+chrome.commands.onCommand.addListener((command) => {
+  if (command !== "scrib-toggle") return;
+  if (!scribHotkeyOn) {
+    void onScribPttDown("command");
+    return;
+  }
+  // Chrome only sees keydown. If keyup never arrived (chrome://), a second press stops.
+  if (Date.now() - scribPttStartedAt > 700) void onScribPttUp();
+});
 
 function productPath(product, meetingUrl) {
   if (product === "brief") {
@@ -269,23 +629,34 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   await handoffMeeting(meetingUrl);
 });
 
-chrome.commands.onCommand.addListener(async (command) => {
-  if (command !== "dictate") return;
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const info = tab?.id
-      ? await chrome.tabs.sendMessage(tab.id, { type: "scrib.activeApp" }).catch(() => ({}))
-      : {};
-    const raw = "hey can you like uh send this to the team tomorrow";
-    const out = await dictate(raw, info.title || info.host || "browser");
-    await insertIntoActiveTab(out.cleaned || out.raw || raw);
-  } catch (e) {
-    console.error("scrib dictate failed", String(e));
+async function injectScrib(tabId) {
+  if (tabId == null) return;
+  await chrome.scripting.executeScript({
+    target: { tabId, allFrames: true },
+    files: ["insert.js", "content.js"],
+  }).catch(() => undefined);
+}
+
+async function injectScribIntoOpenTabs() {
+  const tabs = await chrome.tabs.query({});
+  for (const tab of tabs) {
+    if (!tab.id || isRestrictedUrl(tab.url)) continue;
+    await injectScrib(tab.id);
   }
-});
+}
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => undefined);
+  void injectScribIntoOpenTabs();
+});
+chrome.runtime.onStartup.addListener(() => {
+  void injectScribIntoOpenTabs();
+});
+chrome.tabs.onActivated.addListener((info) => {
+  void injectScrib(info.tabId);
+});
+chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+  if (change.status === "complete" && !isRestrictedUrl(tab.url)) void injectScrib(tabId);
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -312,21 +683,75 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return false;
   }
   if (msg?.type === "scrib.dictate") {
-    dictate(msg.rawText, msg.appName)
-      .then(async (out) => {
-        const insert = await insertIntoActiveTab(out.cleaned || out.raw);
+    getInsertTab()
+      .then(async (tab) => {
+        const field = tab?.id ? await rememberInsertTarget(tab.id) : "unknown";
+        const ctx = tabAppContext(tab, field);
+        const appName = msg.appName && msg.appName !== "browser" ? msg.appName : ctx.appName;
+        const out = await dictate(msg.rawText, appName, ctx.tabContext);
+        let insert = { ok: false };
+        try {
+          insert = await insertIntoActiveTab(insertTextFromTranscript(out));
+        } catch (e) {
+          insert = { ok: false, reason: e instanceof Error ? e.message : String(e) };
+        }
         sendResponse({ ok: true, out, insert });
       })
       .catch((e) => sendResponse({ ok: false, reason: String(e) }));
     return true;
   }
-  if (msg?.type === "scrib.transcribe") {
-    transcribe(msg.audioBase64, msg.format, msg.appName)
-      .then(async (out) => {
-        const insert = await insertIntoActiveTab(out.cleaned || out.transcript || out.raw || "");
-        sendResponse({ ok: true, out, insert });
+  if (msg?.type === "scrib.ptt.down" || msg?.type === "scrib.hotkey") {
+    void onScribPttDown("page");
+    sendResponse({ ok: true });
+    return false;
+  }
+  if (msg?.type === "scrib.ptt.up") {
+    void onScribPttUp();
+    sendResponse({ ok: true });
+    return false;
+  }
+  if (msg?.type === "scrib.rec.start") {
+    getInsertTab()
+      .then(async (tab) => {
+        const field = tab?.id ? await rememberInsertTarget(tab.id) : "unknown";
+        scribListenCtx = tabAppContext(tab, field);
+        return sendOffscreen({ type: "scrib.offscreen.start" });
+      })
+      .then((out) => sendResponse(out?.ok === false ? out : { ok: true }))
+      .catch((e) => sendResponse({ ok: false, reason: String(e) }));
+    return true;
+  }
+  if (msg?.type === "scrib.rec.stop") {
+    sendOffscreen({ type: "scrib.offscreen.stop" })
+      .then(async (clip) => {
+        if (!clip?.ok) {
+          sendResponse({ ok: false, reason: clip?.reason ?? "Recording failed" });
+          return;
+        }
+        if (!clip.audioBase64) {
+          sendResponse({ ok: false, reason: "No audio captured. Click Record, speak, then Stop." });
+          return;
+        }
+        const tab = await getInsertTab();
+        const ctx = scribListenCtx || tabAppContext(tab);
+        scribListenCtx = null;
+        const appName = msg.appName && msg.appName !== "browser" ? msg.appName : ctx.appName;
+        const out = await transcribe(clip.audioBase64, clip.format || "webm", appName, ctx.tabContext);
+        sendResponse({ ok: true, out });
       })
       .catch((e) => sendResponse({ ok: false, reason: String(e) }));
+    return true;
+  }
+  if (msg?.type === "scrib.transcribe") {
+    transcribe(msg.audioBase64, msg.format, msg.appName, msg.tabContext)
+      .then((out) => sendResponse({ ok: true, out }))
+      .catch((e) => sendResponse({ ok: false, reason: String(e) }));
+    return true;
+  }
+  if (msg?.type === "scrib.insert") {
+    insertIntoActiveTab(msg.text || "")
+      .then((insert) => sendResponse({ ok: true, insert }))
+      .catch((e) => sendResponse({ ok: false, reason: e instanceof Error ? e.message : String(e) }));
     return true;
   }
   return false;

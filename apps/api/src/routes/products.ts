@@ -1,7 +1,12 @@
 import type { FastifyInstance } from "fastify";
 import { Capability } from "@pyai/core";
 import type { AppServices } from "../services.js";
-import { liveCandidates, pickProvider } from "../providerPick.js";
+import {
+  liveCandidates,
+  pickProvider,
+  sttFallbackMessage,
+  transcribeWithFallback,
+} from "../providerPick.js";
 
 const WF_SAMPLE = {
   spokenPhrase: "Hey can you like uh send this to the team tomorrow about the NestJS migration",
@@ -18,17 +23,19 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
       rawText?: string;
       mode?: string;
       appName?: string;
+      tabContext?: { host?: string; path?: string; title?: string; field?: string };
       sttProvider?: string;
       cleanupProvider?: string;
       dictionary?: Array<{ term: string; replacement: string }>;
     };
   }>("/api/scrib/dictate", async (req) => {
-    const { buildScribWorkflow } = await import("@pyai/scrib");
+    const { buildScribWorkflow, sanitizeTabContext } = await import("@pyai/scrib");
     const cleanupProvider = pickProvider(svc.platform, Capability.LLM, req.body.cleanupProvider);
     const { def, getArtifact } = buildScribWorkflow(svc.platform, {
       rawText: req.body.rawText,
       mode: req.body.mode as never,
       appName: req.body.appName,
+      tabContext: sanitizeTabContext(req.body.tabContext),
       sttProvider: req.body.sttProvider,
       cleanupProvider,
       dictionary: req.body.dictionary,
@@ -124,42 +131,45 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
     };
   }>("/api/scrib/demo/finish", async (req, reply) => {
     const { buildScribWorkflow } = await import("@pyai/scrib");
-    const sttProvider = pickProvider(svc.platform, Capability.BATCH_STT, req.body.sttProvider);
     const cleanupProvider = pickProvider(svc.platform, Capability.LLM, req.body.cleanupProvider);
     const appName = req.body.appName ?? WF_SAMPLE.appName;
     const mode = (req.body.mode as never) ?? "concise";
     const stages: Array<{ id: string; label: string; detail?: string; ms?: number }> = [];
     let raw = WF_SAMPLE.rawText;
     let hearMs = 0;
+    let sttProvider = pickProvider(svc.platform, Capability.BATCH_STT, req.body.sttProvider);
     let demoMode: "live" | "simulated" = req.body.demoMode ?? "simulated";
 
     const b64 = req.body.audioBase64?.trim();
     if (b64 && b64.length < 10_000_000) {
       try {
         const audio = Uint8Array.from(Buffer.from(b64, "base64"));
-        const sttAdapter = svc.platform.registry.getAdapterFor(Capability.BATCH_STT, sttProvider);
-        const stt = sttAdapter?.asSTT?.();
-        if (stt && sttProvider !== "mock" && audio.length > 0) {
+        if (audio.length > 0) {
           const tHear = Date.now();
-          const heard = await stt.transcribe({
-            audio,
-            format: req.body.audioFormat ?? "mp3",
-          });
+          const heard = await transcribeWithFallback(
+            svc.platform,
+            { audio, format: req.body.audioFormat ?? "mp3" },
+            req.body.sttProvider,
+            { includeMock: false },
+          );
           hearMs = Date.now() - tHear;
-          raw = heard.text?.trim() || WF_SAMPLE.rawText;
+          raw = heard.text;
+          sttProvider = heard.provider;
           demoMode = "live";
           stages.push({
             id: "hear",
-            label: "Transcribe (Hear)",
-            detail: `${sttProvider} → “${raw.slice(0, 80)}${raw.length > 80 ? "…" : ""}”`,
+            label: heard.fallback ? "Transcribe (fallback)" : "Transcribe (Hear)",
+            detail: heard.fallback
+              ? `${heard.provider} after ${heard.errors.join("; ")} → “${raw.slice(0, 80)}${raw.length > 80 ? "…" : ""}”`
+              : `${heard.provider} → “${raw.slice(0, 80)}${raw.length > 80 ? "…" : ""}”`,
             ms: hearMs,
           });
         }
-      } catch (e) {
+      } catch {
         stages.push({
           id: "hear",
           label: "Transcribe (fallback)",
-          detail: e instanceof Error ? e.message : "STT failed; using sample raw text",
+          detail: "Live STT failed; using sample raw text",
         });
         raw = WF_SAMPLE.rawText;
         demoMode = "simulated";
@@ -275,6 +285,7 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
       audioBase64?: string;
       format?: string;
       appName?: string;
+      tabContext?: { host?: string; path?: string; title?: string; field?: string };
       mode?: string;
       sttProvider?: string;
       cleanupProvider?: string;
@@ -292,50 +303,38 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
     }
     if (!audio.length) return reply.code(400).send({ error: "empty audio" });
 
-    const { buildScribWorkflow } = await import("@pyai/scrib");
+    const { buildScribWorkflow, sanitizeTabContext } = await import("@pyai/scrib");
     const cleanupProvider = pickProvider(svc.platform, Capability.LLM, req.body.cleanupProvider);
-    const preferred = req.body.sttProvider;
-    const sttCandidates = [...liveCandidates(preferred), "mock"].filter(
-      (id, i, arr) => arr.indexOf(id) === i,
-    );
-
+    const tHear = Date.now();
     let transcriptText = "";
     let sttProvider = "mock";
     let sttMs = 0;
-    const sttErrors: string[] = [];
+    let sttErrors: string[] = [];
 
-    for (const id of sttCandidates) {
-      const adapter = svc.platform.registry.getAdapterFor(Capability.BATCH_STT, id);
-      if (!adapter?.isConfigured?.() || !adapter.asSTT) continue;
-      const tHear = Date.now();
-      try {
-        const res = await adapter.asSTT().transcribe({
-          audio,
-          format: req.body.format ?? "wav",
-        });
-        sttMs = Date.now() - tHear;
-        transcriptText = res.text?.trim() ?? "";
-        sttProvider = id;
-        break;
-      } catch (e) {
-        sttErrors.push(`${id}: ${e instanceof Error ? e.message.slice(0, 160) : "failed"}`);
-      }
-    }
-
-    if (!transcriptText && sttErrors.length) {
+    try {
+      const heard = await transcribeWithFallback(
+        svc.platform,
+        { audio, format: req.body.format ?? "wav" },
+        req.body.sttProvider,
+        { includeMock: false },
+      );
+      sttMs = Date.now() - tHear;
+      transcriptText = heard.text;
+      sttProvider = heard.provider;
+      sttErrors = heard.errors;
+    } catch (e) {
+      const errors = e && typeof e === "object" && "errors" in e ? (e as { errors: string[] }).errors : [];
       return reply.code(502).send({
-        error: `transcription failed — ${sttErrors[0]}${sttErrors.length > 1 ? ` (also tried ${sttErrors.length - 1} more)` : ""}`,
+        error: sttFallbackMessage(errors.length ? errors : [e instanceof Error ? e.message : "transcription failed"]),
       });
-    }
-    if (!transcriptText) {
-      return reply.code(502).send({ error: "transcription returned empty text" });
     }
 
     try {
       const { def, getArtifact } = buildScribWorkflow(svc.platform, {
         rawText: transcriptText,
-        mode: (req.body.mode as never) ?? "light",
+        mode: req.body.mode as never,
         appName: req.body.appName ?? "browser",
+        tabContext: sanitizeTabContext(req.body.tabContext),
         sttProvider,
         sttMs,
         cleanupProvider,
@@ -758,6 +757,105 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
     },
   ];
 
+  const BRIEF_DEMO_TURNS: Array<{
+    speaker: "me" | "them";
+    label: string;
+    text: string;
+    line: string;
+    voice: string;
+  }> = [
+    {
+      speaker: "me",
+      label: "Me",
+      text: "Thanks for joining. Goal today is the July launch plan.",
+      line: "Me: Thanks for joining. Goal today is the July launch plan.",
+      voice: "onyx",
+    },
+    {
+      speaker: "them",
+      label: "Them",
+      text: "Security review is still open. I think we should move launch to August.",
+      line: "Them: Security review is still open. I think we should move launch to August.",
+      voice: "nova",
+    },
+    {
+      speaker: "me",
+      label: "Me",
+      text: "Agreed — decision: launch moves to August.",
+      line: "Me: Agreed — decision: launch moves to August.",
+      voice: "onyx",
+    },
+    {
+      speaker: "them",
+      label: "Them",
+      text: "I'll own the security pack by Friday. Any questions on pricing?",
+      line: "Them: I'll own the security pack by Friday. Any questions on pricing?",
+      voice: "nova",
+    },
+    {
+      speaker: "me",
+      label: "Me",
+      text: "Can we keep EU data residency in scope?",
+      line: "Me: Can we keep EU data residency in scope?",
+      voice: "onyx",
+    },
+  ];
+
+  const sampleRecordingCache = new Map<
+    string,
+    { audio: Buffer; format: string; fileName: string; ttsProvider: string; at: number }
+  >();
+  const SAMPLE_RECORDING_TTL_MS = 30 * 60 * 1000;
+
+  async function synthesizeSampleRecording(
+    turns: Array<{ text: string; voice: string }>,
+    fileName: string,
+    preferred?: string,
+  ): Promise<{ audio: Buffer; format: string; ttsProvider: string; fileName: string }> {
+    const cacheKey = `${fileName}:${preferred ?? "auto"}`;
+    const hit = sampleRecordingCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < SAMPLE_RECORDING_TTL_MS) return hit;
+
+    const candidates = liveCandidates(preferred);
+    const errors: string[] = [];
+    for (const id of candidates) {
+      const adapter = svc.platform.registry.getAdapterFor(Capability.TTS, id);
+      if (!adapter?.isConfigured?.() || !adapter.asTTS) continue;
+      try {
+        const tts = adapter.asTTS();
+        const clips = await Promise.all(
+          turns.map(async (turn) => {
+            const spoken = await tts.synthesize({
+              text: turn.text,
+              format: "mp3",
+              voice: turn.voice,
+              model: id === "openai" ? "tts-1-hd" : undefined,
+              speed: 1.0,
+            });
+            if (!spoken.audio.length || spoken.audio.length > 2_000_000) {
+              throw new Error(`bad clip size ${spoken.audio.length}`);
+            }
+            return Buffer.from(spoken.audio);
+          }),
+        );
+        const audio = Buffer.concat(clips);
+        if (!audio.length || audio.length > 12 * 1024 * 1024) {
+          throw new Error(`combined audio ${audio.length} bytes`);
+        }
+        const out = { audio, format: "mp3" as const, ttsProvider: id, fileName, at: Date.now() };
+        sampleRecordingCache.set(cacheKey, out);
+        return out;
+      } catch (e) {
+        errors.push(`${id}: ${e instanceof Error ? e.message.slice(0, 140) : "failed"}`);
+      }
+    }
+    throw new Error(
+      errors[0]
+        ? `Could not generate sample recording (${errors[0]}). Connect PyAI or OpenAI TTS.`
+        : "Could not generate sample recording. Connect PyAI or OpenAI TTS.",
+    );
+  }
+
   /** Synthesize one Meet line with natural TTS (used so join isn't blocked on the full script). */
   app.post<{
     Body: { speaker?: "rep" | "customer"; text?: string; ttsProvider?: string };
@@ -876,5 +974,33 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
         ? `Live TTS unavailable (${errors[0]}); using browser voices`
         : "Using browser speech synthesis",
     };
+  });
+
+  /** Combined TTS mp3 for “upload a sample recording” (CallIQ sales call / Brief planning). */
+  app.post<{
+    Body: { product?: string; ttsProvider?: string };
+  }>("/api/sample/recording", async (req, reply) => {
+    const product = req.body.product === "brief" ? "brief" : req.body.product === "calliq" ? "calliq" : null;
+    if (!product) {
+      return reply.code(400).send({ error: "product must be calliq or brief" });
+    }
+    const turns = product === "brief" ? BRIEF_DEMO_TURNS : CALLIQ_DEMO_TURNS;
+    const fileName = product === "brief" ? "brief-sample-meeting.mp3" : "calliq-sample-sales-call.mp3";
+    try {
+      const out = await synthesizeSampleRecording(turns, fileName, req.body.ttsProvider);
+      return {
+        product,
+        fileName: out.fileName,
+        audioFormat: out.format,
+        audioBase64: out.audio.toString("base64"),
+        ttsProvider: out.ttsProvider,
+        durationHint: product === "brief" ? "~20 seconds" : "~30 seconds",
+        note: "Canned two-speaker TTS — not a live Meet. Same upload + Hear path as your own recording.",
+      };
+    } catch (e) {
+      return reply.code(502).send({
+        error: e instanceof Error ? e.message : "sample recording failed",
+      });
+    }
   });
 }

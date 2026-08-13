@@ -213,7 +213,7 @@ export async function mintPyAISandboxKey(
   return { apiKey, keyPrefix };
 }
 
-const HEAR_BATCH_TIMEOUT_MS = 90_000;
+const HEAR_BATCH_TIMEOUT_MS = 180_000;
 
 interface HearAudioMeta {
   format: string;
@@ -314,9 +314,10 @@ async function hearBatchJob(
   const job = await waitHearJob(baseUrl, key, jobId, HEAR_BATCH_TIMEOUT_MS);
   const result = await resolveHearResult(job);
   const segments = mapHearSegments(result.segments);
-  const text =
-    result.text?.trim() ||
-    segments.map((s) => (s.speaker ? `${s.speaker}: ${s.text}` : s.text)).join("\n");
+  const fromSegments = segments
+    .map((s) => (s.speaker ? `${prettyHearSpeaker(s.speaker)}: ${s.text}` : s.text))
+    .join("\n");
+  const text = formatHearTranscript(result.text?.trim() || fromSegments);
   if (!text) throw new Error("pyai hear job returned empty transcript");
   return {
     segments: segments.length ? segments : [{ id: "s1", start: 0, end: 0, text }],
@@ -365,11 +366,44 @@ async function resolveHearResult(job: HearJob): Promise<HearJobResult> {
   throw new Error("pyai hear job completed without result");
 }
 
+function prettyHearSpeaker(raw?: string): string {
+  const s = (raw ?? "").trim().replace(/^\[|\]$/g, "").trim();
+  const n = s.match(/^(?:speaker[_\s-]*)(\d+)$/i);
+  if (n) return `Speaker ${Number(n[1])}`;
+  return s || "Speaker";
+}
+
+function formatHearTranscript(raw: string): string {
+  return raw
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const bracket = line.match(/^\[([^\]]+)\]\s*(.*)$/);
+      if (bracket) {
+        const body = (bracket[2] ?? "").trim();
+        return body ? `${prettyHearSpeaker(bracket[1])}: ${body}` : "";
+      }
+      const colon = line.match(/^([^:]+):\s*(.*)$/);
+      if (colon) {
+        const body = (colon[2] ?? "").trim();
+        return body ? `${prettyHearSpeaker(colon[1])}: ${body}` : "";
+      }
+      return line;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
 function mapHearSegments(raw: HearJobResult["segments"]): TranscriptSegment[] {
   if (!raw?.length) return [];
   return raw.map((s, i) => ({
     id: s.id || `s${i + 1}`,
-    speaker: s.speaker || (s.channel != null ? `ch${s.channel}` : undefined),
+    speaker: s.speaker
+      ? prettyHearSpeaker(s.speaker)
+      : s.channel != null
+        ? `Speaker ${s.channel}`
+        : undefined,
     start: Number(s.start ?? 0),
     end: Number(s.end ?? 0),
     text: String(s.text ?? "").trim(),

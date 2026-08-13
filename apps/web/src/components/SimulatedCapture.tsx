@@ -14,7 +14,7 @@ export function SimulatedSharePicker({
   if (phase !== "picker" && phase !== "mic") return null;
 
   return (
-    <div className="mb-5 overflow-hidden rounded-xl border border-ink-200 bg-white shadow-lg animate-fade-up">
+    <div className="mb-5 overflow-hidden rounded-xl border border-ink-200 bg-surface shadow-lg animate-fade-up">
       <div className="border-b border-ink-100 px-4 py-2.5">
         <div className="text-sm font-semibold text-ink-900">
           {phase === "mic" ? "Allow microphone" : "Share your screen"}

@@ -3,7 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { PageHeader, EmptyState } from "@/components/EmptyState";
 import { StatusBadge } from "@/components/StatusBadge";
 import { DemoStages, type DemoStage } from "@/components/DemoStages";
-import { Button, Input, Label, Select } from "@/components/ui";
+import { Button, Input, Label, Select, AiWorking } from "@/components/ui";
+import { ErrorBanner } from "@/components/ErrorBanner";
 import { api } from "@/lib/api";
 import { pickPreferred, sortProviders } from "@/lib/providers";
 
@@ -61,12 +62,16 @@ export function SimulatorPage() {
   return (
     <div>
       <PageHeader
+        kicker="Product"
         title="Simulator"
         description="Stress-test your voice agent with adversarial callers."
         actions={
-          <Button disabled={busy} onClick={() => void runDemo()}>
-            {busy ? "Running stress test…" : "Run stress test"}
-          </Button>
+          <div className="flex items-center gap-3">
+            {busy ? <AiWorking label="Scoring conversations" /> : null}
+            <Button disabled={busy} onClick={() => void runDemo()}>
+              {busy ? "Running stress test…" : "Run stress test"}
+            </Button>
+          </div>
         }
       />
 
@@ -118,7 +123,11 @@ export function SimulatorPage() {
         ) : null}
       </section>
 
-      {error ? <div className="mb-4 text-sm text-status-block">{error}</div> : null}
+      {error ? (
+        <div className="mb-4">
+          <ErrorBanner title="Stress test failed" message={error} onRetry={() => void runDemo()} />
+        </div>
+      ) : null}
       {(busy || stages.length > 0) && (
         <div className="panel mb-5 p-4">
           <h3 className="mb-3 text-sm font-semibold">Pipeline</h3>

@@ -3,7 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import { PageHeader, EmptyState } from "@/components/EmptyState";
 import { StatusBadge } from "@/components/StatusBadge";
 import { DemoStages, type DemoStage } from "@/components/DemoStages";
-import { Button, Label, Select } from "@/components/ui";
+import { Button, Label, Select, RecDot } from "@/components/ui";
+import { ErrorBanner } from "@/components/ErrorBanner";
+import { useToast } from "@/components/Toast";
 import { api } from "@/lib/api";
 import { ensureWavCompatible, fileToBase64 } from "@/lib/audio";
 import { pickPreferred } from "@/lib/providers";
@@ -175,6 +177,7 @@ function speakWithBrowser(text: string): Promise<void> {
 }
 
 export function ScribPage() {
+  const toast = useToast();
   const providers = useQuery({ queryKey: ["providers"], queryFn: api.providers });
   const [mode, setMode] = useState("concise");
   const [busy, setBusy] = useState(false);
@@ -382,6 +385,7 @@ export function ScribPage() {
   return (
     <div>
       <PageHeader
+        kicker="Product"
         title="Scrib"
         description="Hold to talk for live dictation — or Try demo for the guided walkthrough."
         actions={
@@ -395,7 +399,14 @@ export function ScribPage() {
                 void startPtt();
               }}
             >
-              {recording ? "Release to send…" : "Hold to talk"}
+              {recording ? (
+                <>
+                  <RecDot label="Listening" />
+                  Release to send…
+                </>
+              ) : (
+                "Hold to talk"
+              )}
             </Button>
             <Button
               variant="secondary"
@@ -450,7 +461,7 @@ export function ScribPage() {
               Demo said: <span className="font-medium text-ink-700">“{spokenPhrase}”</span>
             </div>
           ) : null}
-          {error ? <div className="text-sm text-status-block">{error}</div> : null}
+          {error ? <ErrorBanner title="Dictation didn’t finish" message={error} /> : null}
         </section>
 
         <section className="space-y-4">
@@ -468,7 +479,7 @@ export function ScribPage() {
           {!result && !busy ? (
             <EmptyState
               title="No dictation yet"
-              body="Hold to talk with your mic, or Try demo to hear a sample and see cleaned Slack-ready text."
+              body="Hold to talk with your mic, or run the demo to hear a sample and see cleaned Slack-ready text."
               actionLabel="Try demo"
               onAction={() => void runDemo()}
             />
@@ -487,7 +498,21 @@ export function ScribPage() {
                 </div>
               </div>
               <div className="panel p-4">
-                <h3 className="text-sm font-semibold">Before → After (insert target)</h3>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold">Before → After</h3>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(result.cleaned).then(
+                        () => toast.push("Copied cleaned text"),
+                        () => toast.push("Couldn’t copy"),
+                      );
+                    }}
+                  >
+                    Copy cleaned
+                  </Button>
+                </div>
                 <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-ink-50 p-3 text-sm text-ink-600">{result.raw}</pre>
                 <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-ink-950 p-3 text-sm text-ink-100">{result.cleaned}</pre>
                 <div className="mt-2 text-xs text-ink-400">mode={result.mode}</div>

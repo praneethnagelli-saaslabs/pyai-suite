@@ -4,7 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { PageHeader, EmptyState } from "@/components/EmptyState";
 import { DemoStages, type DemoStage } from "@/components/DemoStages";
 import { MeetingBrief } from "@/components/MeetingBrief";
-import { Button, Input, Label, Select, Textarea } from "@/components/ui";
+import { Button, Input, Label, Select, Textarea, RecDot } from "@/components/ui";
+import { ErrorBanner } from "@/components/ErrorBanner";
 import { api } from "@/lib/api";
 import { pickPreferred, sortProviders } from "@/lib/providers";
 import {
@@ -13,7 +14,9 @@ import {
   isLikelySttHallucination,
   displayFileName,
 } from "@/lib/audio";
+import { transcribeUploadedRecording } from "@/lib/transcribeUpload";
 import { RecordingUploadButton } from "@/components/RecordingUpload";
+import { SampleRecordingButtons } from "@/components/SampleRecordingButtons";
 import { extractMeetingUrl } from "@/lib/meetingUrl";
 import {
   unlockAudioPlayback,
@@ -390,28 +393,41 @@ export function BriefPage() {
     setBusy(true);
     setUploading(true);
     setTranscript("");
-    setCaptureNote(`Hear + summary · ${displayFileName(file.name)}`);
+    setCaptureNote(`Hear batch + diarize · ${displayFileName(file.name)}`);
     setStages([
-      { id: "hear", label: "Hear — transcribing recording…", detail: displayFileName(file.name) },
+      { id: "hear", label: "Hear — diarizing recording…", detail: displayFileName(file.name) },
       { id: "summary", label: "Summary — meeting notes…", detail: "waiting" },
       { id: "memory", label: "Store in meeting memory…", detail: "waiting" },
     ]);
     setActiveStageId("hear");
     setCompletedStageIds([]);
     try {
-      const prepared = await prepareForStt(file);
-      if (prepared.audioBase64.length > 18_000_000) {
-        throw new Error("Recording too large after encode (max ~12MB).");
-      }
+      const heard = await transcribeUploadedRecording(file, {
+        provider: sttProvider,
+        diarize: true,
+        prompt:
+          "Meeting conversation with multiple speakers. Transcribe speech only. Label each speaker (e.g. Speaker 1, Speaker 2).",
+        onProgress: ({ label }) => {
+          setCaptureNote(label);
+          setStages((prev) => prev.map((s) => (s.id === "hear" ? { ...s, detail: label } : s)));
+        },
+        onPartial: ({ text, part, total }) => {
+          setTranscript(text);
+          setCaptureNote(
+            total > 1
+              ? `Transcript live · part ${part} of ${total} done`
+              : "Transcript ready — writing summary…",
+          );
+        },
+      });
       const out = await api.briefAnalyze({
-        audioBase64: prepared.audioBase64,
-        audioFormat: prepared.audioFormat,
+        transcriptText: heard.text,
         mode,
         llmProvider,
         sttProvider,
         title: displayFileName(file.name).replace(/\.[^.]+$/, "") || "Uploaded recording",
       });
-      const text = (typeof out.transcript === "string" ? out.transcript : "").trim();
+      const text = ((typeof out.transcript === "string" ? out.transcript : "") || heard.text).trim();
       if (!text) throw new Error("No speech detected in that recording.");
       setTranscript(text);
       setCaptureNote(`Hear via ${out.sttProvider ?? sttProvider}. Summary ready.`);
@@ -488,7 +504,7 @@ export function BriefPage() {
         return;
       }
       const file = new File([blob], "meet-chunk.webm", { type: blob.type || "audio/webm" });
-      const { audioBase64, audioFormat } = await prepareForStt(file);
+      const { audioBase64, audioFormat } = await prepareForStt(file, { preferWav: true });
       if (audioBase64.length > 8_000_000) return;
       const out = await api.sttTranscribe({
         audioBase64,
@@ -689,6 +705,7 @@ export function BriefPage() {
   return (
     <div>
       <PageHeader
+        kicker="Product"
         title="Brief"
         description="Hear transcribes. Summary writes decisions, actions, and a keepable brief."
         actions={
@@ -721,6 +738,13 @@ export function BriefPage() {
               busy={uploading}
               onInvalid={(msg) => setError(msg)}
               onFile={(file) => void uploadRecording(file)}
+            />
+            <SampleRecordingButtons
+              product="brief"
+              disabled={busy || capturing}
+              ttsProvider={ttsProvider === "mock" ? undefined : ttsProvider}
+              onFile={(file) => void uploadRecording(file)}
+              onError={setError}
             />
             <Button
               variant="ghost"
@@ -760,7 +784,10 @@ export function BriefPage() {
       <section className="panel mb-5 space-y-3 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <h2 className="text-sm font-semibold">Live Google Meet (no bot)</h2>
+            <h2 className="flex items-center gap-2 text-sm font-semibold">
+              Live Google Meet (no bot)
+              {capturing ? <RecDot label="Listening" /> : null}
+            </h2>
             <p className="mt-1 max-w-xl text-xs text-ink-500">
               Join Meet in Chrome
               {meetUrl.trim() ? (
@@ -840,9 +867,9 @@ export function BriefPage() {
           </p>
         ) : null}
         {error ? (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-ink-800">
-            <div className="font-medium text-status-block">{error}</div>
-            <div className="mt-2 flex flex-wrap gap-2">
+          <div className="space-y-2">
+            <ErrorBanner title="Couldn’t capture that meeting" message={error} />
+            <div className="flex flex-wrap gap-2">
               <Button type="button" size="sm" onClick={() => void startMeetCapture()}>
                 Try tab share again
               </Button>
@@ -971,9 +998,11 @@ export function BriefPage() {
           {!result && !busy ? (
             <EmptyState
               title="No meetings yet"
-              body="Capture Meet tab audio, upload a recording for Hear + summary, or Try sample demo."
+              body="Capture Meet tab audio, upload a recording, or run the sample demo to generate decisions and action items."
               actionLabel="Capture Meet audio"
               onAction={() => void startMeetCapture()}
+              secondaryLabel="Try sample demo"
+              onSecondary={() => void runDemo()}
             />
           ) : result ? (
             <MeetingBrief notes={result.notes} status={result.status} runId={result.runId} />

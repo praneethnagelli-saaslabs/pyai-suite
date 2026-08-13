@@ -11,6 +11,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   const data = (await res.json().catch(() => ({}))) as T & { error?: string; reason?: string; message?: string };
   if (!res.ok) {
+    if (res.status === 504) {
+      throw new Error(
+        "Transcription timed out while waiting for Hear. Retry the same recording — longer calls are split into parts.",
+      );
+    }
     const msg = (data as { reason?: string; error?: string; message?: string }).reason
       ?? (data as { error?: string }).error
       ?? (data as { message?: string }).message
@@ -90,6 +95,16 @@ export const api = {
   run: (id: string) =>
     request<{ run: RunSummary; calls: Array<Record<string, unknown>> }>(`/api/runs/${id}`),
   sampleCallIQ: () => request<{ transcriptText: string }>("/api/sample/calliq"),
+  sampleRecording: (body: { product: "calliq" | "brief"; ttsProvider?: string }) =>
+    request<{
+      product: "calliq" | "brief";
+      fileName: string;
+      audioFormat: string;
+      audioBase64: string;
+      ttsProvider: string;
+      durationHint: string;
+      note: string;
+    }>("/api/sample/recording", { method: "POST", body: JSON.stringify(body) }),
   sttTranscribe: (body: {
     audioBase64: string;
     format?: string;
@@ -299,6 +314,7 @@ export const api = {
     rawText?: string;
     mode?: string;
     appName?: string;
+    tabContext?: { host?: string; path?: string; title?: string; field?: string };
     sttProvider?: string;
     cleanupProvider?: string;
     dictionary?: Array<{ term: string; replacement: string }>;
@@ -379,6 +395,7 @@ export const api = {
     audioBase64: string;
     format?: string;
     appName?: string;
+    tabContext?: { host?: string; path?: string; title?: string; field?: string };
     mode?: string;
     sttProvider?: string;
     cleanupProvider?: string;

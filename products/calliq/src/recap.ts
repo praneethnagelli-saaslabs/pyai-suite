@@ -126,7 +126,7 @@ export function labeledTranscript(segments: RecapSegment[]): string {
   return segments
     .map((s) => {
       const who = speakerKey(s);
-      return who === "unknown" ? s.text : `[${who}] ${s.text}`;
+      return who === "unknown" ? s.text : `${who}: ${s.text}`;
     })
     .join("\n");
 }

@@ -4,7 +4,8 @@ import { api } from "@/lib/api";
 import { pickPreferred, sortProviders } from "@/lib/providers";
 import { ensureWavCompatible } from "@/lib/audio";
 import { PageHeader } from "@/components/EmptyState";
-import { Button, Input, Label, Select, Textarea } from "@/components/ui";
+import { ErrorBanner } from "@/components/ErrorBanner";
+import { Button, Input, Label, Select, Textarea, AiWorking } from "@/components/ui";
 
 type PlayResult = Awaited<ReturnType<typeof api.playgroundRun>>;
 
@@ -83,6 +84,9 @@ export function PlaygroundPage() {
   const [error, setError] = useState<string | null>(null);
   const [a, setA] = useState<PlayResult | null>(null);
   const [b, setB] = useState<PlayResult | null>(null);
+  const [c, setC] = useState<PlayResult | null>(null);
+  const [providerC, setProviderC] = useState("gemini");
+  const [dragging, setDragging] = useState(false);
   const mediaRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -104,6 +108,7 @@ export function PlaygroundPage() {
     setError(null);
     setA(null);
     setB(null);
+    setC(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, [capability, capMeta.sample]);
 
@@ -111,12 +116,23 @@ export function PlaygroundPage() {
     if (!matching.length) return;
     const primary = pickPreferred(matching, capability);
     setProvider(primary);
-    const next =
-      matching.find((p) => p.configured && p.id !== primary && p.id !== "mock") ??
-      matching.find((p) => p.id !== primary) ??
-      matching[0]!;
-    setProviderB(next.id);
+    const rest = matching.filter((p) => p.id !== primary);
+    setProviderB(rest[0]?.id ?? primary);
+    setProviderC(rest[1]?.id ?? rest[0]?.id ?? primary);
   }, [capability, matching]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        e.preventDefault();
+        if (!busy && matching.length) void runOne("all");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // runOne is stable enough for this session; busy/matching gate the handler
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy, matching.length, capability, provider, providerB, providerC, input, audioBase64, audioFormat, isStt]);
 
   async function onPickAudio(file: File | null) {
     if (!file) {
@@ -179,7 +195,7 @@ export function PlaygroundPage() {
     mediaRef.current = null;
   }
 
-  async function runOne(which: "a" | "b" | "both") {
+  async function runOne(which: "a" | "b" | "c" | "all") {
     if (isStt && !audioBase64 && !input.trim()) {
       setError("Add an audio file/recording, or type text for Speak→Hear.");
       return;
@@ -196,11 +212,14 @@ export function PlaygroundPage() {
         input,
         ...(isStt && audioBase64 ? { audioBase64, audioFormat } : {}),
       };
-      if (which === "a" || which === "both") {
+      if (which === "a" || which === "all") {
         setA(await api.playgroundRun({ ...body, provider }));
       }
-      if (which === "b" || which === "both") {
+      if (which === "b" || which === "all") {
         setB(await api.playgroundRun({ ...body, provider: providerB }));
+      }
+      if (which === "c" || which === "all") {
+        setC(await api.playgroundRun({ ...body, provider: providerC }));
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -212,31 +231,57 @@ export function PlaygroundPage() {
   return (
     <div>
       <PageHeader
-        title="Universal Playground"
-        description="Run the same input across providers. Inspect latency and output side-by-side."
+        kicker="Arena"
+        title="Model arena"
+        description="Same input, three providers. Winner is the fastest successful run — no invented quality scores."
         actions={
-          <div className="flex gap-2">
-            <Button variant="secondary" disabled={busy || !matching.length} onClick={() => void runOne("a")}>
-              Run A
-            </Button>
-            <Button disabled={busy || !matching.length} onClick={() => void runOne("both")}>
-              {busy ? "Running…" : "Run A vs B"}
+          <div className="flex items-center gap-3">
+            {busy ? <AiWorking label="Running arena" /> : null}
+            <Button disabled={busy || !matching.length} onClick={() => void runOne("all")}>
+              {busy ? "Running…" : "Run arena"}
             </Button>
           </div>
         }
       />
 
-      <div className="panel grid gap-4 p-4 md:grid-cols-4">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        {CAPABILITIES.map((cap, i) => (
+          <div key={cap.id} className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setCapability(cap.id)}
+              className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+                capability === cap.id
+                  ? "border-accent bg-accent text-white dark:text-ink-950"
+                  : "border-ink-200 text-ink-600 hover:border-accent/40"
+              }`}
+            >
+              {cap.label}
+            </button>
+            {i < CAPABILITIES.length - 1 ? <span className="text-ink-300">→</span> : null}
+          </div>
+        ))}
+      </div>
+
+      <div
+        className={`grid gap-4 border border-[var(--hairline)] bg-surface p-4 md:grid-cols-3 ${dragging ? "border-accent ring-2 ring-accent/20" : ""}`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          const file = e.dataTransfer.files?.[0];
+          if (file) {
+            setCapability("batch_stt");
+            void onPickAudio(file);
+          }
+        }}
+      >
         <div>
-          <Label>Capability</Label>
-          <Select value={capability} onChange={(e) => setCapability(e.target.value)}>
-            {CAPABILITIES.map((c) => (
-              <option key={c.id} value={c.id}>{c.label}</option>
-            ))}
-          </Select>
-        </div>
-        <div>
-          <Label>Provider A</Label>
+          <Label>A</Label>
           <Select value={provider} onChange={(e) => setProvider(e.target.value)}>
             {matching.map((p) => (
               <option key={p.id} value={p.id}>
@@ -246,7 +291,7 @@ export function PlaygroundPage() {
           </Select>
         </div>
         <div>
-          <Label>Provider B</Label>
+          <Label>B</Label>
           <Select value={providerB} onChange={(e) => setProviderB(e.target.value)}>
             {matching.map((p) => (
               <option key={p.id} value={p.id}>
@@ -256,11 +301,20 @@ export function PlaygroundPage() {
           </Select>
         </div>
         <div>
-          <Label>Model (optional)</Label>
-          <Input placeholder="provider default" disabled />
+          <Label>C</Label>
+          <Select value={providerC} onChange={(e) => setProviderC(e.target.value)}>
+            {matching.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}{p.configured ? "" : " (not configured)"}
+              </option>
+            ))}
+          </Select>
         </div>
 
-        <div className="md:col-span-4">
+        <div className="md:col-span-3">
+          <p className="mb-2 text-xs text-ink-400">
+            {dragging ? "Drop audio to transcribe…" : "Drop an audio file anywhere in this panel, or type below."}
+          </p>
           <CapabilityInput
             kind={capMeta.inputKind}
             label={
@@ -292,12 +346,25 @@ export function PlaygroundPage() {
       </div>
 
       {error ? (
-        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-status-block">{error}</div>
+        <div className="mt-4">
+          <ErrorBanner title="Run failed" message={error} onRetry={() => void runOne("all")} />
+        </div>
       ) : null}
 
-      <div className="mt-5 grid gap-4 lg:grid-cols-2">
-        <ResultCard title={`Run A · ${provider}`} capability={capability} result={a} />
-        <ResultCard title={`Run B · ${providerB}`} capability={capability} result={b} />
+      {a || b || c ? (
+        <ArenaScoreboard
+          rows={[
+            { name: provider, result: a },
+            { name: providerB, result: b },
+            { name: providerC, result: c },
+          ]}
+        />
+      ) : null}
+
+      <div className="mt-5 grid gap-4 lg:grid-cols-3">
+        <ResultCard title={`A · ${provider}`} capability={capability} result={a} busy={busy && !a} />
+        <ResultCard title={`B · ${providerB}`} capability={capability} result={b} busy={busy && !b} />
+        <ResultCard title={`C · ${providerC}`} capability={capability} result={c} busy={busy && !c} />
       </div>
     </div>
   );
@@ -341,7 +408,7 @@ function CapabilityInput({
             ref={fileInputRef}
             type="file"
             accept="audio/*,.wav,.mp3,.webm,.ogg,.m4a,.flac"
-            className="block max-w-full text-sm text-ink-600 file:mr-3 file:rounded-md file:border-0 file:bg-teal-700 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white"
+            className="block max-w-full text-sm text-ink-600 file:mr-3 file:rounded-md file:border-0 file:bg-accent file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white dark:file:text-ink-950"
             onChange={(e) => onPickAudio(e.target.files?.[0] ?? null)}
           />
           {!recording ? (
@@ -405,14 +472,57 @@ function CapabilityInput({
   );
 }
 
+function ArenaScoreboard({
+  rows,
+}: {
+  rows: Array<{ name: string; result: PlayResult | null }>;
+}) {
+  const done = rows.filter((r) => r.result);
+  const fastest = done.reduce<PlayResult | null>((best, row) => {
+    if (!row.result) return best;
+    if (!best || row.result.latencyMs < best.latencyMs) return row.result;
+    return best;
+  }, null);
+  const winnerName = rows.find((r) => r.result && r.result.runId === fastest?.runId)?.name;
+  return (
+    <div className="mt-4 border-t border-[var(--hairline)] py-4">
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="text-sm font-semibold">Scoreboard</h3>
+        {winnerName && fastest ? (
+          <div className="text-sm text-accent">
+            Fastest this run · <span className="font-semibold">{winnerName}</span> · {fastest.latencyMs}ms
+          </div>
+        ) : null}
+      </div>
+      <div className="grid gap-3 md:grid-cols-3">
+        {rows.map((row) => (
+          <div
+            key={row.name}
+            className={`rounded-lg border px-3 py-2 ${
+              row.result && row.result.runId === fastest?.runId ? "border-accent bg-accent-soft" : "border-[var(--hairline)]"
+            }`}
+          >
+            <div className="text-sm font-medium text-ink-900">{row.name}</div>
+            <div className="mt-1 font-mono text-xs text-ink-500">
+              {row.result ? `${row.result.latencyMs}ms · ${row.result.provider}` : "waiting"}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ResultCard({
   title,
   capability,
   result,
+  busy,
 }: {
   title: string;
   capability: string;
   result: PlayResult | null;
+  busy?: boolean;
 }) {
   return (
     <div className="panel p-4">
@@ -421,7 +531,9 @@ function ResultCard({
         {result ? <span className="font-mono text-[11px] text-ink-400">{result.runId}</span> : null}
       </div>
       {!result ? (
-        <p className="mt-6 text-sm text-ink-400">No result yet.</p>
+        <p className="mt-6 text-sm text-ink-400">
+          {busy ? "Waiting for this provider…" : "No result yet — run A, or compare A vs B."}
+        </p>
       ) : (
         <>
           <div className="mt-3 flex flex-wrap gap-3 text-xs text-ink-500">
@@ -466,7 +578,7 @@ function CapabilityOutput({ capability, result }: { capability: string; result: 
           <a
             href={src}
             download={`tts.${r.audioFormat ?? "wav"}`}
-            className="inline-block text-xs font-medium text-teal-800 hover:underline"
+            className="inline-block text-xs font-medium text-accent hover:underline"
           >
             Download
           </a>
@@ -480,7 +592,7 @@ function CapabilityOutput({ capability, result }: { capability: string; result: 
     return (
       <div className="space-y-3">
         {r?.note ? <p className="text-xs text-ink-500">{r.note}</p> : null}
-        <div className="rounded-lg border border-ink-200 bg-white p-3">
+        <div className="rounded-lg border border-ink-200 bg-surface p-3">
           <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-ink-400">Transcript</p>
           <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink-900">{r?.text ?? result.output}</p>
           {r?.language ? <p className="mt-2 text-xs text-ink-400">Language: {r.language}</p> : null}
@@ -530,7 +642,7 @@ function CapabilityOutput({ capability, result }: { capability: string; result: 
                 <div
                   key={i}
                   title={String(n)}
-                  className="min-w-[3px] flex-1 rounded-sm bg-teal-700/80"
+                  className="min-w-[3px] flex-1 rounded-sm bg-accent/80"
                   style={{ height: `${Math.max(8, (Math.abs(n) / max) * 100)}%` }}
                 />
               ))}
@@ -558,7 +670,7 @@ function CapabilityOutput({ capability, result }: { capability: string; result: 
 
   // llm / default
   return (
-    <div className="rounded-lg border border-ink-200 bg-white p-3">
+    <div className="rounded-lg border border-ink-200 bg-surface p-3">
       <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-ink-400">
         Completion{r?.model ? ` · ${r.model}` : ""}
       </p>

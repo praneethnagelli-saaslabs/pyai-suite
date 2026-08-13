@@ -1,11 +1,10 @@
 import type { FastifyInstance } from "fastify";
-import { Capability } from "@pyai/core";
 import type { AppServices } from "../services.js";
-import { liveCandidates } from "../providerPick.js";
+import { sttFallbackMessage, transcribeWithFallback } from "../providerPick.js";
 
 /**
- * Lightweight STT for live Meet / mic chunks. Tries preferred → pyai → openai → mock.
- * When `diarize` is true, PyAI Hear uses batch jobs; OpenAI uses gpt-4o-transcribe-diarize.
+ * Lightweight STT for live Meet / mic chunks. Tries preferred → pyai → openai → gemini.
+ * Empty Hear output counts as failure so OpenAI still runs.
  */
 export async function sttRoutes(app: FastifyInstance, svc: AppServices): Promise<void> {
   app.post<{
@@ -34,53 +33,50 @@ export async function sttRoutes(app: FastifyInstance, svc: AppServices): Promise
 
     const preferred = req.body.provider;
     const wantDiarize = Boolean(req.body.diarize);
-    const candidates = [...liveCandidates(preferred), "mock"].filter(
-      (id, i, arr) => arr.indexOf(id) === i,
-    );
-    const errors: string[] = [];
     const t0 = Date.now();
     const prompt =
       req.body.prompt?.trim() ||
       "Live Google Meet conversation with multiple speakers discussing work. Transcribe speech only; if there is no speech, return an empty string.";
     const fallbackLabel = req.body.speakerLabel?.trim();
 
-    for (const id of candidates) {
-      const adapter = svc.platform.registry.getAdapterFor(Capability.BATCH_STT, id);
-      if (!adapter?.isConfigured?.() || !adapter.asSTT) continue;
-      try {
-        const res = await adapter.asSTT().transcribe({
+    try {
+      const heard = await transcribeWithFallback(
+        svc.platform,
+        {
           audio,
           format: req.body.format ?? "wav",
           prompt,
-          diarize: wantDiarize && (id === "openai" || id === "pyai"),
-        });
-        let text = res.text?.trim() ?? "";
-        const hasSpeakerLines = /^.+:\s+\S+/m.test(text);
-        if (text && fallbackLabel && !hasSpeakerLines) {
-          text = text
-            .split("\n")
-            .map((line) => line.trim())
-            .filter(Boolean)
-            .map((line) => `${fallbackLabel}: ${line}`)
-            .join("\n");
-        }
-        return {
-          text,
-          provider: id,
-          diarized: wantDiarize && (id === "openai" || id === "pyai") && hasSpeakerLines,
-          latencyMs: Date.now() - t0,
-          usage: res.usage,
-          fallback: errors.length > 0,
-          errors: errors.length ? errors : undefined,
-        };
-      } catch (e) {
-        errors.push(`${id}: ${e instanceof Error ? e.message.slice(0, 160) : "failed"}`);
+          diarize: wantDiarize,
+        },
+        preferred,
+        { includeMock: false },
+      );
+      let text = heard.text;
+      const hasSpeakerLines = /(?:^|\n)\s*(?:\[[^\]]+\]|[A-Za-z][^:\n]{0,48}:)\s+\S/.test(text);
+      if (fallbackLabel && !hasSpeakerLines) {
+        text = text
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => `${fallbackLabel}: ${line}`)
+          .join("\n");
       }
+      return {
+        text,
+        provider: heard.provider,
+        diarized: wantDiarize && (heard.provider === "openai" || heard.provider === "pyai") && hasSpeakerLines,
+        latencyMs: Date.now() - t0,
+        usage: heard.result.usage,
+        fallback: heard.fallback,
+        errors: heard.errors.length ? heard.errors : undefined,
+      };
+    } catch (e) {
+      const errors =
+        e && typeof e === "object" && "errors" in e ? (e as { errors: string[] }).errors : [];
+      return reply.code(502).send({
+        error: sttFallbackMessage(errors.length ? errors : [e instanceof Error ? e.message : "no STT provider available"]),
+        errors,
+      });
     }
-
-    return reply.code(502).send({
-      error: errors[0] ?? "no STT provider available",
-      errors,
-    });
   });
 }

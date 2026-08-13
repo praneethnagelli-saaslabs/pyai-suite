@@ -1,65 +1,79 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  darkMode: "class",
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
+        canvas: "var(--canvas)",
+        surface: "var(--surface)",
+        elevated: "var(--elevated)",
+        interactive: "var(--interactive)",
+        overlay: "var(--overlay)",
         ink: {
-          50: "#f4f6f8",
-          100: "#e6ebf0",
-          200: "#c9d3de",
-          300: "#9aabbd",
-          400: "#6b8199",
-          500: "#4a6078",
-          600: "#364a60",
-          700: "#273849",
-          800: "#1a2735",
-          900: "#111b26",
-          950: "#0a1118",
+          50: "var(--ink-50)",
+          100: "var(--ink-100)",
+          200: "var(--ink-200)",
+          300: "var(--ink-300)",
+          400: "var(--ink-400)",
+          500: "var(--ink-500)",
+          600: "var(--ink-600)",
+          700: "var(--ink-700)",
+          800: "var(--ink-800)",
+          900: "var(--ink-900)",
+          950: "var(--ink-950)",
         },
         accent: {
-          DEFAULT: "#0d9488",
-          soft: "#ccfbf1",
-          strong: "#0f766e",
+          DEFAULT: "var(--accent)",
+          soft: "var(--accent-soft)",
+          strong: "var(--accent-strong)",
+          ink: "var(--accent-ink)",
         },
         status: {
-          pass: "#15803d",
-          warn: "#b45309",
-          block: "#b91c1c",
-          running: "#0369a1",
+          pass: "var(--status-pass)",
+          warn: "var(--status-warn)",
+          block: "var(--status-block)",
+          running: "var(--status-info)",
+          info: "var(--status-info)",
+        },
+        soft: {
+          pass: "var(--pass-soft)",
+          warn: "var(--warn-soft)",
+          block: "var(--block-soft)",
+          info: "var(--info-soft)",
         },
       },
       fontFamily: {
-        sans: ["Sora", "ui-sans-serif", "system-ui", "sans-serif"],
+        sans: ["IBM Plex Sans", "ui-sans-serif", "system-ui", "sans-serif"],
+        display: ["IBM Plex Sans", "ui-sans-serif", "system-ui", "sans-serif"],
         mono: ["IBM Plex Mono", "ui-monospace", "monospace"],
       },
+      fontSize: {
+        display: ["2.25rem", { lineHeight: "1.12", letterSpacing: "-0.03em", fontWeight: "600" }],
+        caption: ["0.6875rem", { lineHeight: "1.4", letterSpacing: "0.06em", fontWeight: "500" }],
+      },
       boxShadow: {
-        soft: "0 8px 24px rgba(17, 27, 38, 0.06)",
+        soft: "var(--shadow)",
+      },
+      transitionTimingFunction: {
+        out: "var(--ease-out)",
+        spring: "var(--ease-spring)",
       },
       keyframes: {
         "fade-up": {
           from: { opacity: "0", transform: "translateY(6px)" },
           to: { opacity: "1", transform: "translateY(0)" },
         },
+        "scale-in": {
+          from: { opacity: "0", transform: "translateY(8px) scale(0.98)" },
+          to: { opacity: "1", transform: "translateY(0) scale(1)" },
+        },
       },
       animation: {
-        "fade-up": "fade-up 220ms ease-out",
+        "fade-up": "fade-up 220ms var(--ease-spring)",
+        "scale-in": "scale-in 180ms var(--ease-spring)",
       },
     },
   },
-  plugins: [
-    function panelPlugin({ addComponents }) {
-      addComponents({
-        ".panel": {
-          borderRadius: "0.75rem",
-          borderWidth: "1px",
-          borderStyle: "solid",
-          borderColor: "rgba(201, 211, 222, 0.9)",
-          backgroundColor: "rgba(255, 255, 255, 0.92)",
-          boxShadow: "0 8px 24px rgba(17, 27, 38, 0.06)",
-          backdropFilter: "blur(8px)",
-        },
-      });
-    },
-  ],
+  plugins: [],
 };

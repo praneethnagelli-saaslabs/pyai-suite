@@ -124,66 +124,127 @@ async function blobToWav(blob: Blob): Promise<ArrayBuffer> {
   }
 }
 
-/** 16-bit mono PCM @ 16 kHz — small enough for nginx/Fastify body limits. */
-function encodeWavMono16k(buffer: AudioBuffer): ArrayBuffer {
-  const targetRate = 16_000;
+const STT_RATE = 16_000;
+/** ~2 min of 16 kHz mono WAV — short enough for sync Hear under the proxy wait. */
+const STT_CHUNK_SECONDS = 120;
+const DIRECT_SEND_MAX_BYTES = 10 * 1024 * 1024;
+
+function resampleMono(buffer: AudioBuffer, targetRate: number): Float32Array {
   const ratio = buffer.sampleRate / targetRate;
   const numFrames = Math.max(1, Math.floor(buffer.length / ratio));
-  const dataSize = numFrames * 2;
+  const out = new Float32Array(numFrames);
+  const left = buffer.getChannelData(0);
+  const right = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : null;
+  for (let i = 0; i < numFrames; i++) {
+    const src = Math.min(buffer.length - 1, Math.floor(i * ratio));
+    let sample = left[src] ?? 0;
+    if (right) sample = (sample + (right[src] ?? 0)) / 2;
+    out[i] = sample;
+  }
+  return out;
+}
+
+function pcmToWav16(pcm: Float32Array, sampleRate: number): ArrayBuffer {
+  const dataSize = pcm.length * 2;
   const ab = new ArrayBuffer(44 + dataSize);
   const view = new DataView(ab);
-
   writeStr(view, 0, "RIFF");
   view.setUint32(4, 36 + dataSize, true);
   writeStr(view, 8, "WAVE");
   writeStr(view, 12, "fmt ");
   view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); // PCM
-  view.setUint16(22, 1, true); // mono
-  view.setUint32(24, targetRate, true);
-  view.setUint32(28, targetRate * 2, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
   view.setUint16(32, 2, true);
   view.setUint16(34, 16, true);
   writeStr(view, 36, "data");
   view.setUint32(40, dataSize, true);
-
-  const left = buffer.getChannelData(0);
-  const right = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : null;
-
   let offset = 44;
-  for (let i = 0; i < numFrames; i++) {
-    const src = Math.min(buffer.length - 1, Math.floor(i * ratio));
-    let sample = left[src] ?? 0;
-    if (right) sample = (sample + (right[src] ?? 0)) / 2;
-    sample = Math.max(-1, Math.min(1, sample));
+  for (let i = 0; i < pcm.length; i++) {
+    const sample = Math.max(-1, Math.min(1, pcm[i] ?? 0));
     view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
     offset += 2;
   }
   return ab;
 }
 
+/** 16-bit mono PCM @ 16 kHz — small enough for nginx/Fastify body limits. */
+function encodeWavMono16k(buffer: AudioBuffer): ArrayBuffer {
+  return pcmToWav16(resampleMono(buffer, STT_RATE), STT_RATE);
+}
+
 function writeStr(view: DataView, offset: number, str: string) {
   for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
 }
 
-export async function fileToBase64(file: File): Promise<{ audioBase64: string; audioFormat: string }> {
-  const buf = await file.arrayBuffer();
-  const bytes = new Uint8Array(buf);
+function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
   const chunk = 0x8000;
   for (let i = 0; i < bytes.length; i += chunk) {
     binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
   }
+  return btoa(binary);
+}
+
+export async function fileToBase64(file: File): Promise<{ audioBase64: string; audioFormat: string }> {
+  const buf = await file.arrayBuffer();
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "wav";
   let audioFormat = ext === "mpeg" || ext === "mpga" ? "mp3" : ext;
   if (file.type.includes("webm") || audioFormat === "webm") audioFormat = "webm";
   if (file.type.includes("ogg")) audioFormat = "ogg";
   if (file.type.includes("wav") || audioFormat === "wav") audioFormat = "wav";
-  return { audioBase64: btoa(binary), audioFormat };
+  return { audioBase64: bytesToBase64(new Uint8Array(buf)), audioFormat };
 }
 
-/** ~12MB file ≈ 16MB base64; API rejects above ~15MB decoded / 20M chars. */
-export const MAX_RECORDING_BYTES = 12 * 1024 * 1024;
+function alreadyFitsOneRequest(file: File): boolean {
+  return file.size > 0 && file.size <= DIRECT_SEND_MAX_BYTES;
+}
+
+async function decodeToMono16k(file: File): Promise<Float32Array> {
+  const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+  const ctx = new Ctx();
+  try {
+    const buffer = await ctx.decodeAudioData((await file.arrayBuffer()).slice(0));
+    return resampleMono(buffer, STT_RATE);
+  } finally {
+    await ctx.close().catch(() => undefined);
+  }
+}
+
+/**
+ * Split a recording into STT-sized pieces (16 kHz mono WAV).
+ * Small compressed files are sent as-is; larger Meet exports are downsampled and chunked.
+ */
+export async function audioFileToSttChunks(
+  file: File,
+): Promise<Array<{ audioBase64: string; audioFormat: string }>> {
+  if (alreadyFitsOneRequest(file)) {
+    return [await prepareForStt(file)];
+  }
+
+  let pcm: Float32Array;
+  try {
+    pcm = await decodeToMono16k(file);
+  } catch {
+    throw new Error(
+      "That recording is too large to send as-is, and the browser could not decode it to compress. Export audio-only (mp3 or m4a), not the full Meet video.",
+    );
+  }
+  const framesPerChunk = STT_CHUNK_SECONDS * STT_RATE;
+  const chunks: Array<{ audioBase64: string; audioFormat: string }> = [];
+  for (let start = 0; start < pcm.length; start += framesPerChunk) {
+    const slice = pcm.subarray(start, Math.min(pcm.length, start + framesPerChunk));
+    const wav = pcmToWav16(slice, STT_RATE);
+    chunks.push({ audioBase64: bytesToBase64(new Uint8Array(wav)), audioFormat: "wav" });
+  }
+  return chunks.length ? chunks : [{ audioBase64: bytesToBase64(new Uint8Array(pcmToWav16(pcm, STT_RATE))), audioFormat: "wav" }];
+}
+
+/** Picker limit — Meet video exports. We compress/split before the API. */
+export const MAX_PICK_BYTES = 250 * 1024 * 1024;
+export const MAX_RECORDING_BYTES = MAX_PICK_BYTES;
 
 const ALLOWED_RECORDING_EXT = new Set([
   "wav",
@@ -209,8 +270,8 @@ export function displayFileName(name: string): string {
 
 export function validateRecordingFile(file: File): string | null {
   if (!file || file.size <= 0) return "That file is empty.";
-  if (file.size > MAX_RECORDING_BYTES) {
-    return "Recording is too large (max 12MB). Export a shorter clip or compress to mp3.";
+  if (file.size > MAX_PICK_BYTES) {
+    return "Recording is over 250MB. Export audio-only (mp3 or m4a) instead of the full Meet video.";
   }
   const ext = (file.name.split(".").pop() ?? "").toLowerCase();
   const mime = (file.type || "").toLowerCase();

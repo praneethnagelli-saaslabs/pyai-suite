@@ -94,12 +94,20 @@ export function DemoStages({
             <span
               className={cn(
                 "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full font-mono text-[10px]",
-                active && "bg-accent text-white",
-                done && !active && "bg-ink-800 text-white",
+                active && "bg-accent text-white dark:text-ink-950",
+                done && !active && "bg-ink-800 text-white dark:bg-ink-200 dark:text-ink-950",
                 !done && !active && "bg-ink-200 text-ink-500",
               )}
             >
-              {done && !active ? "✓" : idx + 1}
+              {done && !active ? "✓" : active ? (
+                <span className="ai-dots flex gap-px" aria-hidden>
+                  <span className="h-0.5 w-0.5 rounded-full bg-current" />
+                  <span className="h-0.5 w-0.5 rounded-full bg-current" />
+                  <span className="h-0.5 w-0.5 rounded-full bg-current" />
+                </span>
+              ) : (
+                idx + 1
+              )}
             </span>
             <div className="min-w-0 flex-1">
               <div className="font-medium text-ink-800">{s.label}</div>

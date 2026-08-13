@@ -2,12 +2,24 @@ import { describe, expect, it } from "vitest";
 import { createPlatform } from "@pyai/core";
 import { buildScribWorkflow, localCleanup } from "./workflow.js";
 import { PersonalDictionary } from "./dictionary.js";
-import { resolveAppMode } from "./modes.js";
+import { cleanupUserMessage, formatTabContext, isCodeField, sanitizeTabContext } from "./modes.js";
 
 describe("Scrib", () => {
-  it("resolves app-aware modes", () => {
-    expect(resolveAppMode("Slack")?.mode).toBe("concise");
-    expect(resolveAppMode("Gmail - Inbox")?.mode).toBe("professional");
+  it("sends tab context to the cleaner without host mapping", () => {
+    const ctx = sanitizeTabContext({
+      host: "www.programiz.com",
+      path: "/php/online-compiler/",
+      title: "Online PHP Compiler",
+      field: "ace",
+    });
+    expect(ctx?.field).toBe("ace");
+    expect(isCodeField(ctx?.field)).toBe(true);
+    const msg = cleanupUserMessage('echo "hello world"', ctx);
+    expect(msg).toContain("www.programiz.com");
+    expect(msg).toContain("field: ace");
+    expect(msg).toContain('echo "hello world"');
+    expect(formatTabContext({ host: "mail.google.com", field: "contenteditable" })).toContain("mail.google.com");
+    expect(sanitizeTabContext({ field: "not-a-real-field" })?.field).toBe("unknown");
   });
 
   it("applies personal dictionary", () => {
@@ -20,6 +32,10 @@ describe("Scrib", () => {
     const out = localCleanup("hey can you like uh send this tomorrow", "light");
     expect(out.toLowerCase()).not.toContain("uh");
     expect(out.toLowerCase()).not.toContain(" like ");
+  });
+
+  it("local cleanup leaves code fields unchanged", () => {
+    expect(localCleanup('echo "hello world"', "raw")).toBe('echo "hello world"');
   });
 
   it("flags chatbot-style cleanup failures", async () => {

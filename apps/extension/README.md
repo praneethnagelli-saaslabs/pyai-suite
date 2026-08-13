@@ -20,7 +20,7 @@ The extension only hands Brief the Meet URL. Capture stays in the app (tab audio
 
 ## Scrib dictation
 
-Popup → **Record dictation** opens a small window (the popup cannot keep Chrome’s mic prompt open). Allow the microphone for PyAI Suite if asked. `Cmd/Ctrl+Shift+Space` still inserts a demo line into the focused field.
+Hold **Control+Shift+1** (Control ⌃, not ⌘), speak, **release** to paste at the caret. Or hold **Hold to talk** in the popup. Allow the microphone once if Chrome asks. The toolbar badge shows **ON** while you hold. Chrome’s own pages (`chrome://`) copy text for ⌘V. Re-assign the key under `chrome://extensions/shortcuts` after reload.
 
 ## Security
 

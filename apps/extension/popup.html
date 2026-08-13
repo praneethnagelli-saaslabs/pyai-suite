@@ -3,42 +3,48 @@
   <head>
     <meta charset="UTF-8" />
     <title>PyAI Suite</title>
-    <style>
-      body { font: 13px/1.4 system-ui, sans-serif; margin: 12px; width: 300px; color: #111b26; }
-      button { width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: #0d9488; color: #fff; font-weight: 600; cursor: pointer; margin-top: 6px; }
-      button.secondary { background: #1e3a4c; }
-      button.rec { background: #b42318; }
-      button:disabled { opacity: 0.5; cursor: not-allowed; }
-      textarea { width: 100%; min-height: 72px; margin: 8px 0; box-sizing: border-box; }
-      .hint { color: #6b8199; font-size: 11px; margin-top: 8px; }
-      code { font-family: ui-monospace, monospace; font-size: 11px; }
-      #status { font-size: 11px; color: #0d9488; min-height: 1.2em; }
-      hr { border: 0; border-top: 1px solid #e5eaf0; margin: 12px 0; }
-      .meet { font-size: 11px; color: #6b8199; word-break: break-all; }
-    </style>
+    <link rel="stylesheet" href="shared.css" />
   </head>
   <body>
-    <strong>PyAI Suite</strong>
-    <div id="status"></div>
+    <div class="wrap">
+      <div class="top">
+        <div class="brand">
+          <span class="mark" aria-hidden="true">P</span>
+          <strong>PyAI Suite</strong>
+        </div>
+        <div id="meet-chip" class="chip">Not in Meet</div>
+      </div>
+      <div id="status"></div>
 
-    <button id="start-with-bot">Start call with CallIQ Bot</button>
-    <button id="calliq" class="secondary" disabled>Bring bot into this Meet</button>
-    <p id="meet-url" class="meet"></p>
+      <section class="card">
+        <h2>CallIQ</h2>
+        <div class="row">
+          <button id="calliq" class="btn" disabled>Send bot</button>
+          <button id="start-with-bot" class="btn secondary">New Meet</button>
+        </div>
+        <p id="meet-url" class="meet"></p>
+      </section>
 
-    <hr />
-    <div style="font-size:11px;font-weight:600;margin-bottom:4px">Brief (no bot)</div>
-    <button id="brief-open" class="secondary">Open Meet + Brief</button>
-    <button id="brief-capture" class="secondary" disabled>Capture this Meet in Brief</button>
+      <section class="card">
+        <h2>Brief</h2>
+        <div class="row">
+          <button id="brief-capture" class="btn secondary" disabled>Capture</button>
+          <button id="brief-open" class="btn ghost">Open Meet</button>
+        </div>
+      </section>
 
-    <hr />
-    <div style="font-size:11px;font-weight:600;margin-bottom:4px">Scrib dictation</div>
-    <textarea id="raw" placeholder="Speak… or paste raw transcript"></textarea>
-    <button id="mic" class="secondary">Record dictation</button>
-    <button id="go">Clean + insert</button>
-    <p class="hint">
-      <strong>CallIQ</strong> stays in Meet — transcript opens in the side panel (not a new tab).
-      <strong>Brief</strong> captures tab audio. Reload the extension after updates.
-    </p>
+      <section class="card">
+        <h2>Scrib</h2>
+        <textarea id="raw" placeholder="Speak or paste…"></textarea>
+        <div class="row">
+          <button id="mic" class="btn secondary">Hold to talk</button>
+          <button id="go" class="btn">Clean + insert</button>
+        </div>
+      </section>
+
+      <p id="scrib-hint" class="hint">Hold <kbd>Control+Shift+1</kbd> (⌃ not ⌘), speak, release to paste</p>
+      <p class="hint"><a href="#" id="scrib-shortcuts">Change shortcut</a> · hold the button, or allow the mic once</p>
+    </div>
     <script src="popup.js"></script>
   </body>
 </html>

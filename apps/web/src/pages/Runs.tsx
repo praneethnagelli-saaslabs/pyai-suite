@@ -1,11 +1,15 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { PageHeader, EmptyState } from "@/components/EmptyState";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui";
+import { ErrorBanner } from "@/components/ErrorBanner";
+import { ListSkeleton } from "@/components/Skeleton";
 
 export function RunsPage() {
+  const navigate = useNavigate();
   const runs = useQuery({ queryKey: ["runs"], queryFn: () => api.runs(100), refetchInterval: 4000 });
   const [selected, setSelected] = useState<string | null>(null);
   const detail = useQuery({
@@ -19,8 +23,9 @@ export function RunsPage() {
   return (
     <div>
       <PageHeader
+        kicker="Platform"
         title="Runs"
-        description="Universal run explorer. Every AI operation ends in an explicit status — no silent failures."
+        description="Every AI operation ends in an explicit status — latency, provider calls, and failures stay inspectable."
         actions={
           <Button variant="secondary" onClick={() => void runs.refetch()}>
             Refresh
@@ -28,15 +33,21 @@ export function RunsPage() {
         }
       />
 
-      {list.length === 0 ? (
+      {runs.isLoading ? (
+        <div className="panel overflow-hidden">
+          <ListSkeleton rows={8} />
+        </div>
+      ) : list.length === 0 ? (
         <EmptyState
           title="No runs yet"
-          body="CallIQ analysis and playground executions appear here with latency, gates, and provider calls."
+          body="CallIQ analysis, Scrib dictation, Brief summaries, and playground executions appear here with latency and provider calls."
+          actionLabel="Open playground"
+          onAction={() => navigate("/playground")}
         />
       ) : (
         <div className="grid gap-4 lg:grid-cols-[1fr_1.1fr]">
           <div className="panel overflow-hidden">
-            <ul className="divide-y divide-ink-100">
+            <ul className="max-h-[70vh] divide-y divide-ink-100 overflow-auto">
               {list.map((r) => (
                 <li key={r.runId}>
                   <button
@@ -46,7 +57,9 @@ export function RunsPage() {
                   >
                     <div className="min-w-0">
                       <div className="truncate font-medium text-ink-900">{r.workflowId}</div>
-                      <div className="truncate font-mono text-[11px] text-ink-400">{r.runId} · {r.product}</div>
+                      <div className="truncate font-mono text-[11px] text-ink-400">
+                        {r.runId} · {r.product}
+                      </div>
                     </div>
                     <StatusBadge status={r.status} />
                   </button>
@@ -59,7 +72,7 @@ export function RunsPage() {
             {!selected ? (
               <p className="text-sm text-ink-400">Select a run to inspect timeline, latency, and provider calls.</p>
             ) : detail.isLoading ? (
-              <p className="text-sm text-ink-400">Loading…</p>
+              <ListSkeleton rows={4} />
             ) : detail.data ? (
               <div className="animate-fade-up">
                 <div className="flex flex-wrap items-center gap-2">
@@ -68,17 +81,17 @@ export function RunsPage() {
                 </div>
                 <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
                   <div>
-                    <dt className="text-[11px] uppercase tracking-wide text-ink-400">Latency</dt>
+                    <dt className="text-caption uppercase text-ink-400">Latency</dt>
                     <dd className="font-mono">{detail.data.run.durationMs ?? "—"}ms</dd>
                   </div>
                   <div>
-                    <dt className="text-[11px] uppercase tracking-wide text-ink-400">Provider calls</dt>
+                    <dt className="text-caption uppercase text-ink-400">Provider calls</dt>
                     <dd className="font-mono">{detail.data.calls.length}</dd>
                   </div>
                 </dl>
                 {detail.data.run.error ? (
-                  <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-status-block">
-                    {detail.data.run.error}
+                  <div className="mt-4">
+                    <ErrorBanner title="This run failed" message={String(detail.data.run.error)} />
                   </div>
                 ) : null}
                 <h3 className="mt-5 text-sm font-semibold">Provider calls</h3>

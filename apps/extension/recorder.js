@@ -33,15 +33,16 @@ async function startRec() {
   };
   mediaRecorder.start();
   toggleBtn.classList.add("rec");
-  toggleBtn.textContent = "Stop recording";
-  setStatus("Recording… click Stop when you are done.");
+  toggleBtn.textContent = "Stop";
+  statusEl.innerHTML = '<span class="pulse"></span>Recording… click Stop when you are done.';
+  statusEl.classList.remove("err");
 }
 
 async function finishRec() {
   stream?.getTracks().forEach((t) => t.stop());
   stream = null;
   toggleBtn.classList.remove("rec");
-  toggleBtn.textContent = "Start recording";
+  toggleBtn.textContent = "Start";
   if (!chunks.length) {
     setStatus("No audio captured. Try again and speak after Start.", true);
     return;
@@ -56,13 +57,17 @@ async function finishRec() {
   chrome.runtime.sendMessage(
     { type: "scrib.transcribe", audioBase64, format: "webm", appName: "browser" },
     (res) => {
+      if (chrome.runtime.lastError) {
+        setStatus(`Error: ${chrome.runtime.lastError.message}`, true);
+        return;
+      }
       if (!res?.ok) {
         setStatus(`Error: ${res?.reason ?? "unknown"}`, true);
         return;
       }
       lastText = res.out?.cleaned ?? res.out?.transcript ?? "";
       insertBtn.disabled = !lastText;
-      setStatus(lastText ? "Ready. Insert into the page, or record again." : "No transcript returned.");
+      setStatus(lastText ? "Ready. Click a text box, then Insert." : "No transcript returned.");
     },
   );
 }
@@ -85,11 +90,21 @@ toggleBtn.addEventListener("click", async () => {
 
 insertBtn.addEventListener("click", () => {
   if (!lastText) return;
-  chrome.runtime.sendMessage({ type: "scrib.dictate", rawText: lastText, appName: "browser" }, (res) => {
-    if (!res?.ok) {
-      setStatus(`Insert failed: ${res?.reason ?? "unknown"}`, true);
+  chrome.runtime.sendMessage({ type: "scrib.insert", text: lastText }, (res) => {
+    if (chrome.runtime.lastError) {
+      setStatus(`Insert failed: ${chrome.runtime.lastError.message}`, true);
       return;
     }
-    setStatus("Inserted into the active tab.");
+    if (!res?.ok || res.insert?.ok === false) {
+      const reason = res?.reason ?? res?.insert?.reason;
+      setStatus(
+        reason === "no_editable_target"
+          ? "Click in a text box on the page, then Insert."
+          : reason ?? "Insert failed. Refresh the page, click a text box, try again.",
+        true,
+      );
+      return;
+    }
+    setStatus("Inserted into the page.");
   });
 });

@@ -45,6 +45,7 @@ window.addEventListener("message", (event) => {
   if (!allowedOrigin(event.origin)) return;
   if (event.data?.type !== "calliq.iframe.ready") return;
   frameOrigin = event.origin;
+  document.getElementById("frame-wrap")?.classList.add("ready");
   flushPending();
 });
 

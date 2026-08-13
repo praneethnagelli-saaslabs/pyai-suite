@@ -11,8 +11,12 @@ import {
   type MeetPhase,
   type MeetSpeakerId,
 } from "@/components/SimulatedMeet";
-import { Button, Input, Label, Select, Textarea } from "@/components/ui";
+import { Button, Input, Label, Select, Textarea, AiWorking, RecDot } from "@/components/ui";
+import { ErrorBanner } from "@/components/ErrorBanner";
+import { InsightCard, ScoreOverview } from "@/components/InsightCard";
+import { ConversationWorkspace } from "@/components/workspace/ConversationWorkspace";
 import { RecordingUploadButton } from "@/components/RecordingUpload";
+import { SampleRecordingButtons } from "@/components/SampleRecordingButtons";
 import { pickPreferred, sortProviders } from "@/lib/providers";
 import {
   unlockAudioPlayback,
@@ -47,9 +51,10 @@ import {
   meetingHostLabel,
 } from "@/lib/meetingUrl";
 import { cn } from "@/lib/cn";
-import { displayFileName, prepareForStt } from "@/lib/audio";
+import { displayFileName } from "@/lib/audio";
+import { transcribeUploadedRecording } from "@/lib/transcribeUpload";
 
-type DetailTab = "notes" | "transcript" | "activity";
+type DetailTab = "workspace" | "notes" | "transcript" | "activity";
 
 export function CallIQPage() {
   const [params, setSearchParams] = useSearchParams();
@@ -66,7 +71,7 @@ export function CallIQPage() {
   const [detailTab, setDetailTab] = useState<DetailTab>(() => {
     const id = loadSelectedCallId();
     const call = id ? loadCalls().find((c) => c.id === id) : undefined;
-    if (call?.status === "recording" || (call?.transcript && !call.analysis)) return "transcript";
+    if (call?.transcript) return "workspace";
     return "notes";
   });
   const [clipboardUrl, setClipboardUrl] = useState<string | null>(null);
@@ -97,6 +102,7 @@ export function CallIQPage() {
   const [activeSpeaker, setActiveSpeaker] = useState<MeetSpeakerId | null>(null);
   const [liveCaption, setLiveCaption] = useState("");
   const [workingCallId, setWorkingCallId] = useState<string | null>(null);
+  const [pendingSample, setPendingSample] = useState(false);
 
   const pollAbort = useRef(false);
   const joinInFlight = useRef(false);
@@ -128,7 +134,7 @@ export function CallIQPage() {
 
   const botHint = useMemo(() => {
     if (!botProviders.data?.attendee.configured) {
-      return "Attendee not configured — set ATTENDEE_API_KEY for real Meet joins, or use Try demo.";
+      return "Attendee not configured — set ATTENDEE_API_KEY for real Meet joins, or play the sample call.";
     }
     return "One CallIQ Bot per Meet. First knock after Docker start can take 20–45s (Chrome in the container). Admit that one guest; don’t click Send twice.";
   }, [botProviders.data]);
@@ -189,7 +195,7 @@ export function CallIQPage() {
     }
 
     if (!st?.configured) {
-      setError("Google OAuth is not set up. Use Start in-app call, or Try demo.");
+      setError("Google OAuth is not set up. Use Start in-app call, or play the sample call.");
       return;
     }
     if (!st.connected) {
@@ -302,7 +308,7 @@ export function CallIQPage() {
       const c = pool.find((x) => x.id === id);
       if (c) {
         setTranscript(c.transcript);
-        setDetailTab(c.analysis ? "notes" : "transcript");
+        setDetailTab("workspace");
       }
     }
   }
@@ -350,7 +356,7 @@ export function CallIQPage() {
     setWorkingCallId(id);
     setTranscript(call.transcript);
     setError(null);
-    setDetailTab(call.analysis ? "notes" : "transcript");
+    setDetailTab("workspace");
     return call;
   }
 
@@ -375,7 +381,7 @@ export function CallIQPage() {
       return;
     }
     if (demo) {
-      void runProductDemo();
+      setPendingSample(true);
       setSearchParams({}, { replace: true });
       return;
     }
@@ -430,7 +436,7 @@ export function CallIQPage() {
             patchCall(match.id, { transcript: cur.transcriptText.trim() });
             setTranscript(cur.transcriptText.trim());
             selectCall(match.id);
-            setDetailTab("transcript");
+            setDetailTab("workspace");
           }
           if (!liveStatuses.has(cur.status)) return;
           live = {
@@ -461,7 +467,7 @@ export function CallIQPage() {
       if (!call) return;
       setSelectedId(id);
       if (call.transcript) setTranscript(call.transcript);
-      if (call.analysis) setDetailTab("notes");
+      if (call.analysis) setDetailTab("workspace");
     };
     const onStorage = (event: StorageEvent) => {
       if (!event.key || event.key === CALLIQ_CALLS_KEY || event.key === CALLIQ_SELECTED_KEY || event.key === CALLIQ_LIVE_KEY) {
@@ -609,7 +615,7 @@ export function CallIQPage() {
         ),
       );
       await analyze(text, { callId: draft.id, keepPipeline: true, source: "demo" });
-      setDetailTab("notes");
+      setDetailTab("workspace");
     } catch (e) {
       stopDemoSpeech();
       const msg = e instanceof Error ? e.message : String(e);
@@ -686,7 +692,7 @@ export function CallIQPage() {
         error: undefined,
       });
       selectCall(callId);
-      setDetailTab("notes");
+      setDetailTab("workspace");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
@@ -740,7 +746,7 @@ export function CallIQPage() {
         setTranscript(text);
         if (!openedTranscript) {
           openedTranscript = true;
-          setDetailTab("transcript");
+          setDetailTab("workspace");
         }
         patchCall(callId, {
           transcript: text,
@@ -830,7 +836,7 @@ export function CallIQPage() {
     setShowJoin(true);
     setBotBusy(true);
     setError(null);
-    setDetailTab("transcript");
+    setDetailTab("workspace");
     setPipelineActive("bot");
     setPipelineDone([]);
     setStages([
@@ -899,7 +905,7 @@ export function CallIQPage() {
     });
     setBotBusy(true);
     setError(null);
-    setDetailTab("transcript");
+    setDetailTab("workspace");
     setPipelineActive("bot");
     setPipelineDone([]);
     setStages([
@@ -973,25 +979,50 @@ export function CallIQPage() {
     setPipelineActive("hear");
     setPipelineDone([]);
     setStages([
-      { id: "hear", label: "Hear — transcribing recording…", detail: displayFileName(file.name) },
+      { id: "hear", label: "Hear — diarizing recording…", detail: displayFileName(file.name) },
       { id: "recap", label: "Recap — deal notes…", detail: "waiting" },
     ]);
     try {
-      const prepared = await prepareForStt(file);
-      if (prepared.audioBase64.length > 18_000_000) {
-        throw new Error("Recording too large after encode (max ~12MB).");
-      }
+      const heard = await transcribeUploadedRecording(file, {
+        provider: sttProvider,
+        diarize: true,
+        prompt:
+          "Sales conversation with a rep and a customer. Transcribe speech only. Label speakers (Rep / Customer) when possible.",
+        onProgress: ({ label }) => {
+          setStages((prev) => prev.map((s) => (s.id === "hear" ? { ...s, detail: label } : s)));
+        },
+        onPartial: ({ text, part, total }) => {
+          setTranscript(text);
+          patchCall(draft.id, { transcript: text, status: "recording" });
+          if (part === 1) setDetailTab("workspace");
+          setStages((prev) =>
+            prev.map((s) =>
+              s.id === "hear"
+                ? {
+                    ...s,
+                    detail:
+                      total > 1
+                        ? `part ${part} of ${total} ready — ${total - part} left`
+                        : "transcript ready",
+                  }
+                : s,
+            ),
+          );
+        },
+      });
+      patchCall(draft.id, { transcript: heard.text, status: "analyzing" });
+      setStages((prev) =>
+        prev.map((s) => (s.id === "hear" ? { ...s, detail: `${heard.provider} · ${heard.parts} part${heard.parts === 1 ? "" : "s"}` } : s)),
+      );
       setBusy(true);
       setError(null);
-      patchCall(draft.id, { status: "analyzing" });
       const out = await api.analyzeCallIQ({
-        audioBase64: prepared.audioBase64,
-        audioFormat: prepared.audioFormat,
+        transcriptText: heard.text,
         sttProvider,
         llmProvider,
         verifyProvider: llmProvider,
       });
-      const text = out.transcript?.text?.trim() ?? "";
+      const text = (out.transcript?.text?.trim() || heard.text).trim();
       if (!text) throw new Error("No speech detected in that recording.");
       setTranscript(text);
       setStages(out.stages ?? []);
@@ -1015,7 +1046,7 @@ export function CallIQPage() {
         error: undefined,
       });
       selectCall(draft.id);
-      setDetailTab("notes");
+      setDetailTab("workspace");
       setBusy(false);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -1040,7 +1071,7 @@ export function CallIQPage() {
         const c = next.find((x) => x.id === fallback);
         if (c) {
           setTranscript(c.transcript);
-          setDetailTab(c.analysis ? "notes" : "transcript");
+          setDetailTab("workspace");
         }
       } else {
         setTranscript("");
@@ -1056,8 +1087,9 @@ export function CallIQPage() {
   return (
     <div>
       <PageHeader
+        kicker="Product"
         title="CallIQ"
-        description="Hear transcribes. Recap writes talk-ratio, keywords, and deal notes."
+        description="Join a real Google Meet as a bot, or play the sample call (audio + recap). Hear transcribes. Recap writes deal notes."
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Button disabled={busy || botBusy || awaitingFollowMe} onClick={() => void openStartCallPanel()}>
@@ -1068,7 +1100,7 @@ export function CallIQPage() {
               disabled={busy || botBusy}
               onClick={() => void runProductDemo()}
             >
-              {botBusy && meetPhase !== "idle" ? "Demo running…" : "Try demo"}
+              {botBusy && meetPhase !== "idle" ? "Playing sample…" : "Play sample call"}
             </Button>
             <RecordingUploadButton
               variant="ghost"
@@ -1076,6 +1108,17 @@ export function CallIQPage() {
               busy={busy && selected?.source === "upload" && selected.status === "recording"}
               onInvalid={(msg) => setError(msg)}
               onFile={(file) => void uploadRecording(file)}
+            />
+            <SampleRecordingButtons
+              product="calliq"
+              disabled={busy || botBusy}
+              ttsProvider={
+                pickPreferred(providers.data?.providers ?? [], "tts") === "mock"
+                  ? undefined
+                  : pickPreferred(providers.data?.providers ?? [], "tts")
+              }
+              onFile={(file) => void uploadRecording(file)}
+              onError={setError}
             />
           </div>
         }
@@ -1088,13 +1131,57 @@ export function CallIQPage() {
       ) : null}
 
       {error ? (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-status-block">
-          {error}
+        <div className="mb-4">
+          <ErrorBanner title="CallIQ couldn’t finish that step" message={error} />
+        </div>
+      ) : null}
+
+      {pendingSample && meetPhase === "idle" ? (
+        <div className="panel mb-5 space-y-3 p-5">
+          <p className="text-caption uppercase text-ink-400">Sample call</p>
+          <h2 className="text-lg font-semibold text-ink-950">Turn your volume on, then click play.</h2>
+          <p className="max-w-xl text-sm leading-relaxed text-ink-500">
+            This is not a live Google Meet. You will hear a short canned sales call between Alex (rep) and Dana
+            (customer). Captions appear as they speak. When the audio ends, Recap writes objections and next steps.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              onClick={() => {
+                setPendingSample(false);
+                void runProductDemo();
+              }}
+            >
+              Play sample now
+            </Button>
+            <Button variant="ghost" onClick={() => setPendingSample(false)}>
+              Cancel
+            </Button>
+          </div>
         </div>
       ) : null}
 
       {meetPhase !== "idle" ? (
-        <div className="mb-5">
+        <div className="mb-5 space-y-3">
+          {selected?.source === "demo" ? (
+            <div className="rounded-md border border-accent/30 bg-accent/5 px-4 py-3 text-sm text-ink-800">
+              <p className="font-medium text-ink-950">Sample call — turn your volume on.</p>
+              <p className="mt-1 text-ink-600">
+                This is not a live Google Meet. You will hear Alex (rep) and Dana (customer). Captions appear as they
+                speak. When the audio ends, Recap writes objections and next steps.
+              </p>
+              <ol className="mt-2 grid gap-1 text-xs text-ink-500 sm:grid-cols-3">
+                <li>
+                  <span className="font-semibold text-ink-700">1.</span> People join the fake lobby
+                </li>
+                <li>
+                  <span className="font-semibold text-ink-700">2.</span> They talk — you hear it
+                </li>
+                <li>
+                  <span className="font-semibold text-ink-700">3.</span> Recap fills the workspace
+                </li>
+              </ol>
+            </div>
+          ) : null}
           <SimulatedMeetStage
             phase={meetPhase}
             present={meetPresent}
@@ -1102,6 +1189,8 @@ export function CallIQPage() {
             activeSpeaker={activeSpeaker}
             caption={liveCaption}
             statusLine={meetStatus}
+            title={selected?.source === "demo" ? "Sample sales call" : undefined}
+            meetUrl={selected?.source === "demo" ? "not a live Meet · audio on" : undefined}
           />
         </div>
       ) : null}
@@ -1295,7 +1384,9 @@ export function CallIQPage() {
             </div>
           ) : null}
           {calls.length === 0 ? (
-            <div className="p-4 text-sm text-ink-500">No calls yet.</div>
+            <div className="p-4 text-sm text-ink-500">
+              No conversations yet. Send the bot to a Meet, upload a recording, or try the demo.
+            </div>
           ) : (
             <ul className="max-h-[560px] divide-y divide-ink-100 overflow-y-auto">
               {calls.map((c) => (
@@ -1333,10 +1424,12 @@ export function CallIQPage() {
         <section className="min-w-0 space-y-4">
           {!selected && !inLiveSession ? (
             <EmptyState
-              title="No call selected"
-              body="Join Meet as bot, upload a recording to transcribe, or Try demo."
+              title="No conversation selected"
+              body="Send CallIQ Bot into a Meet, upload a recording, or play the sample call (you will hear a short conversation)."
               actionLabel="Join Meet as bot"
               onAction={() => void openStartCallPanel()}
+              secondaryLabel="Play sample call"
+              onSecondary={() => void runProductDemo()}
             />
           ) : selected ? (
             <>
@@ -1348,8 +1441,8 @@ export function CallIQPage() {
                       {sourceLabel(selected.source)}
                     </span>
                     {selected.status === "ready" ? <StatusBadge status="SUCCEEDED" /> : null}
-                    {selected.status === "recording" ? <StatusBadge status="RECORDING" /> : null}
-                    {selected.status === "analyzing" ? <StatusBadge status="ANALYZING" /> : null}
+                    {selected.status === "recording" ? <RecDot /> : null}
+                    {selected.status === "analyzing" ? <AiWorking label="Analyzing conversation" /> : null}
                     {selected.status === "failed" ? <StatusBadge status="FAILED" /> : null}
                   </div>
                   <p className="mt-1 text-xs text-ink-400">
@@ -1386,8 +1479,9 @@ export function CallIQPage() {
               <div className="flex gap-1 border-b border-ink-100">
                 {(
                   [
+                    ["workspace", "Workspace"],
                     ["notes", "Deal notes"],
-                    ["transcript", "Transcript"],
+                    ["transcript", "Edit"],
                     ["activity", "Activity"],
                   ] as const
                 ).map(([id, label]) => (
@@ -1406,6 +1500,19 @@ export function CallIQPage() {
                   </button>
                 ))}
               </div>
+
+              {detailTab === "workspace" ? (
+                <ConversationWorkspace
+                  transcript={transcript}
+                  analysis={analysis}
+                  live={botBusy || selected.status === "recording"}
+                  llmProvider={llmProvider}
+                  understanding={busy}
+                  onUnderstand={() =>
+                    void analyze(transcript, { callId: selected.id, source: selected.source })
+                  }
+                />
+              ) : null}
 
               {detailTab === "notes" ? (
                 !analysis ? (
@@ -1427,19 +1534,34 @@ export function CallIQPage() {
                   />
                 ) : (
                   <div className="space-y-4 animate-fade-up">
-                    <div className="panel p-4">
-                      {typeof analysis.dealHealthScore === "number" ? (
-                        <div className="text-2xl font-semibold tabular-nums">
-                          Deal health {analysis.dealHealthScore}
-                        </div>
-                      ) : null}
-                      {analysis.dealHealthRationale ? (
-                        <p className="mt-2 text-sm text-ink-700">{analysis.dealHealthRationale}</p>
-                      ) : null}
-                      {analysis.summary ? (
-                        <p className="mt-2 text-sm text-ink-600">{analysis.summary}</p>
-                      ) : null}
-                    </div>
+                    <ScoreOverview
+                      score={typeof analysis.dealHealthScore === "number" ? analysis.dealHealthScore : undefined}
+                      label="Deal health"
+                      rows={[
+                        ...(analysis.summary
+                          ? [{ label: "Summary", value: analysis.summary.slice(0, 120) }]
+                          : []),
+                        ...(analysis.talkRatio?.length
+                          ? [
+                              {
+                                label: "Talk ratio",
+                                value: analysis.talkRatio.map((r) => `${r.speaker} ${r.pct}%`).join(" · "),
+                              },
+                            ]
+                          : []),
+                        {
+                          label: "Objections",
+                          value: String(analysis.objections?.length ?? 0),
+                        },
+                        {
+                          label: "Next steps",
+                          value: String(analysis.nextSteps?.length ?? 0),
+                        },
+                      ]}
+                    />
+                    {analysis.dealHealthRationale ? (
+                      <p className="text-sm leading-relaxed text-ink-600">{analysis.dealHealthRationale}</p>
+                    ) : null}
                     {analysis.talkRatio?.length ? (
                       <div className="panel p-4">
                         <h3 className="text-sm font-semibold">Talk ratio</h3>
@@ -1475,28 +1597,27 @@ export function CallIQPage() {
                       </div>
                     ) : null}
                     {analysis.objections?.length ? (
-                      <div className="panel p-4">
-                        <h3 className="text-sm font-semibold">Objections</h3>
-                        <ul className="mt-2 space-y-2 text-sm">
-                          {analysis.objections.map((o, i) => (
-                            <li key={i} className="rounded-lg bg-ink-50 px-3 py-2">
-                              <span className="font-medium">{o.type}</span> — {o.detail}
-                            </li>
-                          ))}
-                        </ul>
+                      <div className="space-y-2">
+                        <h3 className="text-sm font-semibold">Insights</h3>
+                        {analysis.objections.map((o, i) => (
+                          <InsightCard key={i} label="Risk" title={o.type} tone="risk">
+                            {o.detail}
+                          </InsightCard>
+                        ))}
                       </div>
                     ) : null}
                     {analysis.nextSteps?.length ? (
-                      <div className="panel p-4">
-                        <h3 className="text-sm font-semibold">Next steps</h3>
-                        <ul className="mt-2 space-y-1 text-sm">
-                          {analysis.nextSteps.map((n, i) => (
-                            <li key={i}>
-                              • {n.owner ? `${n.owner}: ` : ""}
-                              {n.task}
-                            </li>
-                          ))}
-                        </ul>
+                      <div className="space-y-2">
+                        {analysis.nextSteps.map((n, i) => (
+                          <InsightCard
+                            key={i}
+                            label="Recommendation"
+                            title={n.owner ? n.owner : "Next step"}
+                            tone="action"
+                          >
+                            {n.task}
+                          </InsightCard>
+                        ))}
                       </div>
                     ) : null}
                     {analysis.followUpEmail ? (

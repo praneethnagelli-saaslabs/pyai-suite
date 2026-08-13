@@ -149,10 +149,13 @@ function segmentsFromTranscript(text: string): BriefSegment[] {
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line, i) => {
-      const m = line.match(/^([^:]+):\s*(.*)$/);
+      const bracket = line.match(/^\[([^\]]+)\]\s*(.*)$/);
+      const colon = line.match(/^([^:]+):\s*(.*)$/);
+      const m = bracket ?? colon;
+      const rawSpeaker = m?.[1]?.trim();
       return {
         id: `s${i + 1}`,
-        speaker: m?.[1]?.trim(),
+        speaker: rawSpeaker ? displaySpeaker(rawSpeaker) : undefined,
         start: i * 10,
         end: (i + 1) * 10,
         text: (m?.[2] ?? line).trim(),
@@ -163,7 +166,7 @@ function segmentsFromTranscript(text: string): BriefSegment[] {
 function labeledTranscript(segments: BriefSegment[], fallback: string): string {
   if (!segments.length) return fallback;
   return segments
-    .map((s) => (s.speaker ? `[${s.speaker}] ${s.text}` : s.text))
+    .map((s) => (s.speaker ? `${s.speaker}: ${s.text}` : s.text))
     .join("\n");
 }
 
@@ -175,9 +178,11 @@ function notesToClaims(notes: MeetingNotes): Array<{ claim: string; evidence?: u
 }
 
 function displaySpeaker(raw: string): string {
-  const t = raw.trim();
+  const t = raw.trim().replace(/^\[|\]$/g, "").trim();
   if (/^me$/i.test(t)) return "You";
   if (/^them$/i.test(t)) return "Jordan";
+  const n = t.match(/^(?:speaker[_\s-]*)(\d+)$/i);
+  if (n) return `Speaker ${Number(n[1])}`;
   return t || "Unassigned";
 }
 

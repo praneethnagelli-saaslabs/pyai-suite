@@ -4,7 +4,15 @@ import {
   Capability,
   ZERO_USAGE,
 } from "@pyai/core";
-import { type CleanupMode, cleanupSystemPrompt, cleanupUserMessage, looksLikeAssistantReply, resolveAppMode } from "./modes.js";
+import {
+  type CleanupMode,
+  type TabContext,
+  cleanupSystemPrompt,
+  cleanupUserMessage,
+  isCodeField,
+  looksLikeAssistantReply,
+  sanitizeTabContext,
+} from "./modes.js";
 import { PersonalDictionary, type DictionaryEntry } from "./dictionary.js";
 
 export interface ScribInput {
@@ -13,6 +21,8 @@ export interface ScribInput {
   audio?: Uint8Array;
   mode?: CleanupMode;
   appName?: string;
+  /** Focused tab + field. Cleaner uses this instead of a host→mode map. */
+  tabContext?: TabContext;
   sttProvider?: string;
   cleanupProvider?: string;
   dictionary?: DictionaryEntry[];
@@ -44,8 +54,8 @@ export function buildScribWorkflow(
   platform: Platform,
   input: ScribInput,
 ): { def: WorkflowDef; getArtifact: () => ScribArtifact } {
-  const rule = resolveAppMode(input.appName);
-  const mode: CleanupMode = input.mode ?? rule?.mode ?? "light";
+  const tabContext = sanitizeTabContext(input.tabContext) ?? sanitizeTabContext({ title: input.appName });
+  const mode: CleanupMode = input.mode ?? "light";
   const dict = new PersonalDictionary();
   for (const e of input.dictionary ?? []) dict.add(e);
 
@@ -81,14 +91,30 @@ export function buildScribWorkflow(
             if (input.sttProvider) sttProvider = input.sttProvider;
             return { text: raw, provider: sttProvider, usage: { ...ZERO_USAGE } };
           }
-          const adapter = platform.registry.getAdapterFor(Capability.BATCH_STT, input.sttProvider);
-          const stt = adapter?.asSTT;
-          if (!stt) throw new Error("no STT provider");
-          sttProvider = adapter.id;
-          const res = await stt().transcribe({ audio: input.audio ?? new Uint8Array(1) });
-          raw = res.text;
-          latency.sttMs = Date.now() - t;
-          return { text: raw, provider: adapter.id, usage: res.usage };
+          const order = [input.sttProvider, "pyai", "openai", "gemini", "mock"].filter(
+            (id, i, arr): id is string => Boolean(id) && arr.indexOf(id) === i,
+          );
+          let lastErr = "no STT provider";
+          for (const id of order) {
+            const adapter = platform.registry.getAdapterFor(Capability.BATCH_STT, id);
+            const stt = adapter?.asSTT;
+            if (!stt || (typeof adapter.isConfigured === "function" && !adapter.isConfigured())) continue;
+            try {
+              const res = await stt().transcribe({ audio: input.audio ?? new Uint8Array(1) });
+              const text = res.text?.trim() ?? "";
+              if (!text) {
+                lastErr = `${id}: empty transcript`;
+                continue;
+              }
+              raw = text;
+              sttProvider = adapter.id;
+              latency.sttMs = Date.now() - t;
+              return { text: raw, provider: adapter.id, usage: res.usage };
+            } catch (e) {
+              lastErr = `${id}: ${e instanceof Error ? e.message : "failed"}`;
+            }
+          }
+          throw new Error(lastErr);
         },
       },
       {
@@ -112,31 +138,41 @@ export function buildScribWorkflow(
             return { text: cleaned, provider: "none", usage: { ...ZERO_USAGE } };
           }
           const t = Date.now();
-          const adapter = platform.registry.getAdapterFor(Capability.LLM, input.cleanupProvider);
-          const llm = adapter?.asLLM;
-          // PyAI is Hear/Speak only (no chat). Mock LLM used to echo
-          // "Mock analysis for: <cleanup prompt>" into the text field.
-          if (!llm || adapter.id === "mock") {
-            cleaned = localCleanup(dict.apply(raw), mode);
-            cleanupProvider = "local";
-            latency.cleanupMs = Date.now() - t;
-            return { text: cleaned, provider: "local", usage: { ...ZERO_USAGE } };
-          }
-          cleanupProvider = adapter.id;
           const dictated = dict.apply(raw);
-          const res = await llm().complete({
-            messages: [
-              { role: "system", content: cleanupSystemPrompt(mode, input.customHint ?? rule?.hint) },
-              { role: "user", content: cleanupUserMessage(dictated) },
-            ],
-            temperature: 0.1,
-            maxTokens: 1024,
-          });
-          const candidate = res.text.trim();
-          // If the model answered like a chatbot, fall back to deterministic cleanup.
-          cleaned = looksLikeAssistantReply(dictated, candidate) ? localCleanup(dictated, mode) : candidate;
+          const fallbackMode: CleanupMode = isCodeField(tabContext?.field) ? "raw" : mode;
+          const order = [input.cleanupProvider, "openai", "gemini"].filter(
+            (id, i, arr): id is string =>
+              Boolean(id) && id !== "mock" && id !== "local" && id !== "none" && arr.indexOf(id) === i,
+          );
+          for (const id of order) {
+            const adapter = platform.registry.getAdapterFor(Capability.LLM, id);
+            const llm = adapter?.asLLM;
+            if (!llm || adapter.id === "mock") continue;
+            if (typeof adapter.isConfigured === "function" && !adapter.isConfigured()) continue;
+            try {
+              const res = await llm().complete({
+                messages: [
+                  { role: "system", content: cleanupSystemPrompt(mode, input.customHint, tabContext) },
+                  { role: "user", content: cleanupUserMessage(dictated, tabContext, input.appName) },
+                ],
+                temperature: 0.1,
+                maxTokens: 1024,
+              });
+              const candidate = res.text.trim();
+              cleaned = looksLikeAssistantReply(dictated, candidate)
+                ? localCleanup(dictated, fallbackMode)
+                : candidate;
+              cleanupProvider = looksLikeAssistantReply(dictated, candidate) ? "local" : adapter.id;
+              latency.cleanupMs = Date.now() - t;
+              return { text: cleaned, provider: cleanupProvider, usage: res.usage };
+            } catch {
+              /* try next LLM, then local cleanup */
+            }
+          }
+          cleaned = localCleanup(dictated, fallbackMode);
+          cleanupProvider = "local";
           latency.cleanupMs = Date.now() - t;
-          return { text: cleaned, provider: adapter.id, usage: res.usage };
+          return { text: cleaned, provider: "local", usage: { ...ZERO_USAGE } };
         },
       },
     ],
@@ -150,7 +186,7 @@ export function buildScribWorkflow(
         raw,
         cleaned: cleaned || dict.apply(raw),
         mode,
-        appRuleId: rule?.id,
+        appRuleId: undefined,
         latency: { ...latency },
         sttProvider,
         cleanupProvider,
@@ -161,6 +197,7 @@ export function buildScribWorkflow(
 
 /** Offline deterministic cleanup for Mock/Demo paths. */
 export function localCleanup(text: string, mode: CleanupMode): string {
+  if (mode === "raw") return text.trim();
   let t = text.replace(/\b(uh+|um+|er+|like)\b/gi, "").replace(/\s{2,}/g, " ").trim();
   if (!t) return text.trim();
   t = t.charAt(0).toUpperCase() + t.slice(1);
