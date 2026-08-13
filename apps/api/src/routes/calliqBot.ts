@@ -4,9 +4,18 @@ import {
   getMeetingBot,
   joinMeetingBot,
   leaveMeetingBot,
+  MeetingBotInUseError,
+  meetingBotOwnerFromCookie,
+  meetingBotOwnerSetCookie,
 } from "../meetingBot/index.js";
 
-/** CallIQ meeting-bot join (Recall production, Attendee demo/fallback). */
+function joinFailed(reply: { code: (n: number) => { send: (b: unknown) => unknown } }, e: unknown) {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (e instanceof MeetingBotInUseError) return reply.code(409).send({ error: msg });
+  return reply.code(400).send({ error: msg });
+}
+
+/** CallIQ meeting-bot join (one bot + one transcript owner per Meet). */
 export async function calliqBotRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/calliq/bot/providers", async () => botProviderStatus());
 
@@ -24,7 +33,9 @@ export async function calliqBotRoutes(app: FastifyInstance): Promise<void> {
         botName: req.body.botName,
         prefer: req.body.prefer ?? "auto",
         demo: Boolean(req.body.demo),
+        ownerSessionId: meetingBotOwnerFromCookie(req.headers.cookie),
       });
+      void reply.header("Set-Cookie", meetingBotOwnerSetCookie(session.id));
       return {
         id: session.id,
         provider: session.provider,
@@ -35,7 +46,7 @@ export async function calliqBotRoutes(app: FastifyInstance): Promise<void> {
         externalId: session.externalId,
       };
     } catch (e) {
-      return reply.code(400).send({ error: e instanceof Error ? e.message : String(e) });
+      return joinFailed(reply, e);
     }
   });
 

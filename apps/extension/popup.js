@@ -74,7 +74,7 @@ startWithBotBtn.addEventListener("click", async () => {
         return;
       }
       if (res.joined) {
-        setStatus("CallIQ opened — admit CallIQ Bot once (check people / waiting room).");
+        setStatus("CallIQ opened — admit one CallIQ Bot. Only you get the transcript.");
         return;
       }
       setStatus("Join the Meet tab. Bot follows when the room is ready.");
@@ -141,7 +141,7 @@ calliqBtn.addEventListener("click", async () => {
         setStatus(`Error: ${res?.reason ?? "unknown"}`);
         return;
       }
-      setStatus("CallIQ opened — admit CallIQ Bot once (check people / waiting room).");
+      setStatus("CallIQ opened — admit one CallIQ Bot. Only you get the transcript.");
     },
   );
 });

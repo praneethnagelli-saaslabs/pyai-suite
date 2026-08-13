@@ -113,7 +113,7 @@ export function CallIQPage() {
     if (!botProviders.data?.attendee.configured) {
       return "Attendee not configured — set ATTENDEE_API_KEY for real Meet joins, or use Try demo.";
     }
-    return "Open your Meet, copy the invite link, paste it here, then send CallIQ Bot. Admit the bot in the waiting room.";
+    return "One CallIQ Bot per Meet — only the person who sends it gets the transcript. Admit that one guest; deny extras.";
   }, [botProviders.data]);
 
   function pingExtension(): Promise<boolean> {
@@ -1005,8 +1005,8 @@ export function CallIQPage() {
             {botNote ? <p className="text-xs text-ink-500">{botNote}</p> : null}
             <p className="text-[11px] text-ink-400">
               Watch Meet → People. Admit <span className="font-medium text-ink-600">one</span> CallIQ Bot (deny extras).
-              Host: anyone with the link can ask to join. The bot can sit in “joining” for a minute while Chrome
-              knocks — that is not a Google block.
+              Teammates should not Send Bot — they will not get the transcript. “Joining” while Chrome knocks is not a
+              Google block.
             </p>
           </div>
 

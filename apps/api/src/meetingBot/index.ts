@@ -46,7 +46,19 @@ export type JoinBotInput = {
   prefer?: "auto" | "recall" | "attendee" | "simulated";
   /** Demo path (same providers; allows empty meetingUrl for simulated) */
   demo?: boolean;
+  /** Cookie from the browser that sent this bot — only they may reattach. */
+  ownerSessionId?: string;
 };
+
+/** Second sender: no new guest, no transcript. */
+export class MeetingBotInUseError extends Error {
+  constructor() {
+    super(
+      "CallIQ Bot is already in this Meet. Only the person who sent it gets the transcript. Admit that one bot and deny any extra guests.",
+    );
+    this.name = "MeetingBotInUseError";
+  }
+}
 
 function env(name: string): string | undefined {
   const v = process.env[name]?.trim();
@@ -338,14 +350,37 @@ async function keepOneActiveAttendeeBot(meetingUrl: string): Promise<AttendeeBot
   return keep;
 }
 
+function isLiveSession(session: BotSession): boolean {
+  if (session.status === "in_call") return true;
+  return session.status === "joining" && Date.now() - session.createdAt < FRESH_JOIN_MS;
+}
+
 function findLocalActiveSession(meetingUrl: string): BotSession | undefined {
   for (const session of sessions.values()) {
-    if (session.provider !== "attendee") continue;
+    if (session.provider !== "attendee" && session.provider !== "simulated") continue;
     if (!sameMeetingUrl(session.meetingUrl, meetingUrl)) continue;
-    if (session.status === "in_call") return session;
-    if (session.status === "joining" && Date.now() - session.createdAt < FRESH_JOIN_MS) return session;
+    if (isLiveSession(session)) return session;
   }
   return undefined;
+}
+
+function claimOwnerSession(meetingUrl: string, ownerSessionId?: string): BotSession | undefined {
+  if (!ownerSessionId || !/^ogbot_[a-z0-9_]+$/i.test(ownerSessionId)) return undefined;
+  const owned = sessions.get(ownerSessionId);
+  if (!owned) return undefined;
+  if (!sameMeetingUrl(owned.meetingUrl, meetingUrl)) return undefined;
+  return isLiveSession(owned) ? owned : undefined;
+}
+
+const OWNER_COOKIE = "calliq_bot";
+
+export function meetingBotOwnerFromCookie(header?: string): string | undefined {
+  const m = new RegExp(`(?:^|; )${OWNER_COOKIE}=(ogbot_[a-z0-9_]+)`, "i").exec(header ?? "");
+  return m?.[1];
+}
+
+export function meetingBotOwnerSetCookie(sessionId: string): string {
+  return `${OWNER_COOKIE}=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=14400`;
 }
 
 async function attendeeCreate(
@@ -707,10 +742,14 @@ export async function joinMeetingBot(input: JoinBotInput): Promise<BotSession> {
   const now = Date.now();
 
   if (provider === "simulated") {
+    const demoUrl = meetingUrl || "https://meet.google.com/demo-calliq";
+    const owned = claimOwnerSession(demoUrl, input.ownerSessionId);
+    if (owned) return owned;
+    if (findLocalActiveSession(demoUrl)) throw new MeetingBotInUseError();
     const session: BotSession = {
       id,
       provider: "simulated",
-      meetingUrl: meetingUrl || "https://meet.google.com/demo-calliq",
+      meetingUrl: demoUrl,
       botName,
       status: "joining",
       createdAt: now,
@@ -753,53 +792,20 @@ export async function joinMeetingBot(input: JoinBotInput): Promise<BotSession> {
           "Paste a real Meet/Zoom link (e.g. https://meet.google.com/abc-defg-hij). Attendee joins an existing meeting — it does not create Google Meet rooms.",
         );
       }
-      const local = findLocalActiveSession(meetingUrl);
-      if (local) return local;
+      const owned = claimOwnerSession(meetingUrl, input.ownerSessionId);
+      if (owned) return owned;
+      if (findLocalActiveSession(meetingUrl)) throw new MeetingBotInUseError();
       const existing = await keepOneActiveAttendeeBot(meetingUrl);
-      if (existing) {
-        const session: BotSession = {
-          id,
-          provider: "attendee",
-          externalId: existing.id,
-          meetingUrl,
-          botName,
-          status: (() => {
-            const st = normalizeAttendeeState(existing.state ?? "");
-            return st.startsWith("joined") || st === "connected" ? "in_call" : "joining";
-          })(),
-          createdAt: now,
-          updatedAt: now,
-          detail: "Reusing the bot already in this Meet — admit CallIQ Bot once (deny extras)",
-        };
-        sessions.set(id, session);
-        return session;
-      }
+      if (existing) throw new MeetingBotInUseError();
       let created: { id: string; raw: unknown };
       try {
         created = await attendeeCreate(meetingUrl, botName);
       } catch (createErr) {
         const msg = createErr instanceof Error ? createErr.message : String(createErr);
-        const raced = await keepOneActiveAttendeeBot(meetingUrl);
-        if (raced && isReusableAttendeeBot(raced) && /dedup|already exists|non-terminal/i.test(msg)) {
-          const session: BotSession = {
-            id,
-            provider: "attendee",
-            externalId: raced.id,
-            meetingUrl,
-            botName,
-            status: "joining",
-            createdAt: now,
-            updatedAt: now,
-            detail: "Reusing the bot already in this Meet — admit CallIQ Bot once",
-          };
-          sessions.set(id, session);
-          return session;
-        }
         if (/dedup|already exists|non-terminal/i.test(msg)) {
-          created = await attendeeCreate(meetingUrl, botName, `${meetingDedupKey(meetingUrl)}-${now}`);
-        } else {
-          throw createErr;
+          throw new MeetingBotInUseError();
         }
+        throw createErr;
       }
       const session: BotSession = {
         id,

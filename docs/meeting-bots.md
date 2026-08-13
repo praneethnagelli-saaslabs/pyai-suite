@@ -7,6 +7,8 @@
 
 Attendee **joins an existing** Meet/Zoom URL. It does not create Google Meet meetings.
 
+**One bot, one transcript:** admit a single CallIQ Bot. Only the browser that sent it receives captions. A second Send Bot is rejected (no extra guest, no shared transcript).
+
 ## Setup
 
 See **[attendee-selfhost.md](./attendee-selfhost.md)**.

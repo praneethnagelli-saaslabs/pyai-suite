@@ -1,5 +1,10 @@
 import type { FastifyInstance } from "fastify";
-import { joinMeetingBot } from "../meetingBot/index.js";
+import {
+  joinMeetingBot,
+  MeetingBotInUseError,
+  meetingBotOwnerFromCookie,
+  meetingBotOwnerSetCookie,
+} from "../meetingBot/index.js";
 import {
   buildGoogleAuthUrl,
   createInstantGoogleMeet,
@@ -119,7 +124,9 @@ export async function googleMeetRoutes(app: FastifyInstance): Promise<void> {
         botName: "CallIQ Bot",
         prefer: "auto",
         demo: false,
+        ownerSessionId: meetingBotOwnerFromCookie(req.headers.cookie),
       });
+      void reply.header("Set-Cookie", meetingBotOwnerSetCookie(bot.id));
       return {
         meetingUrl: meet.meetingUrl,
         eventId: meet.eventId,
@@ -136,6 +143,7 @@ export async function googleMeetRoutes(app: FastifyInstance): Promise<void> {
       };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      if (e instanceof MeetingBotInUseError) return reply.code(409).send({ error: msg });
       return reply.code(400).send({ error: msg });
     }
   });

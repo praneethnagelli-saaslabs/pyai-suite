@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   attendeeCreatePayload,
   extractTranscriptFromUnknown,
+  joinMeetingBot,
   mapAttendeeBotStatus,
+  MeetingBotInUseError,
+  meetingBotOwnerFromCookie,
   meetingDedupKey,
 } from "./index.js";
 
@@ -116,5 +119,27 @@ describe("mapAttendeeBotStatus", () => {
     });
     expect(mapped.status).toBe("done");
     expect(mapped.leftMeet).toBe(true);
+  });
+});
+
+describe("one bot, one transcript owner", () => {
+  it("rejects a second join for the same Meet without handing over the transcript", async () => {
+    const meet = `https://meet.google.com/own-${Date.now().toString(36)}-aaa`;
+    const owner = await joinMeetingBot({ meetingUrl: meet, prefer: "simulated", demo: true });
+    await expect(joinMeetingBot({ meetingUrl: meet, prefer: "simulated", demo: true })).rejects.toBeInstanceOf(
+      MeetingBotInUseError,
+    );
+    const again = await joinMeetingBot({
+      meetingUrl: meet,
+      prefer: "simulated",
+      demo: true,
+      ownerSessionId: owner.id,
+    });
+    expect(again.id).toBe(owner.id);
+  });
+
+  it("reads only a well-formed owner cookie", () => {
+    expect(meetingBotOwnerFromCookie(`other=1; calliq_bot=${"ogbot_abc_def"}`)).toBe("ogbot_abc_def");
+    expect(meetingBotOwnerFromCookie("calliq_bot=../secret")).toBeUndefined();
   });
 });
