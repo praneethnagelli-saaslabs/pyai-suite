@@ -140,21 +140,29 @@ type AttendeeBotRow = {
   join_at?: string;
 };
 
-const FRESH_JOIN_MS = 25_000;
+/** Chrome-in-Docker can take this long to knock; after that a joining bot is a zombie. */
+const STUCK_LAUNCH_MS = 45_000;
 
-function isFreshJoin(row: AttendeeBotRow): boolean {
+function joinAgeMs(row: AttendeeBotRow): number | null {
   const at = row.join_at ? Date.parse(row.join_at) : NaN;
-  if (!Number.isFinite(at)) return false;
-  return Date.now() - at < FRESH_JOIN_MS;
+  return Number.isFinite(at) ? Date.now() - at : null;
 }
 
-function isReusableAttendeeBot(row: AttendeeBotRow): boolean {
+function isKnockingOrInCall(row: AttendeeBotRow): boolean {
   const st = normalizeAttendeeState(row.state ?? "");
-  if (st.startsWith("joined") || st === "connected") return true;
-  if (st === "joining" || st === "waiting_room" || st === "staged" || st === "ready") {
-    return isFreshJoin(row);
-  }
-  return false;
+  return st === "waiting_room" || st.startsWith("joined") || st === "connected";
+}
+
+function isFreshLaunch(row: AttendeeBotRow): boolean {
+  const st = normalizeAttendeeState(row.state ?? "");
+  if (st !== "joining" && st !== "staged" && st !== "ready" && st !== "scheduled") return false;
+  const age = joinAgeMs(row);
+  if (age == null) return false;
+  return age < STUCK_LAUNCH_MS;
+}
+
+export function isReusableAttendeeBot(row: AttendeeBotRow): boolean {
+  return isKnockingOrInCall(row) || isFreshLaunch(row);
 }
 
 const ATTENDEE_ACTIVE_JOIN_STATES = new Set([
@@ -322,13 +330,12 @@ async function attendeeListBots(query: Record<string, string> = {}): Promise<Att
 
 async function findActiveAttendeeBots(meetingUrl: string): Promise<AttendeeBotRow[]> {
   const key = meetingDedupKey(meetingUrl);
-  const [byKey, byUrl, recent] = await Promise.all([
+  const [byKey, byUrl] = await Promise.all([
     attendeeListBots({ deduplication_key: key }),
     attendeeListBots({ meeting_url: meetingUrl }),
-    attendeeListBots({}),
   ]);
   const seen = new Map<string, AttendeeBotRow>();
-  for (const row of [...byKey, ...byUrl, ...recent]) {
+  for (const row of [...byKey, ...byUrl]) {
     if (!row?.id) continue;
     const url = typeof row.meeting_url === "string" ? row.meeting_url : "";
     const matches =
@@ -344,7 +351,8 @@ async function findActiveAttendeeBots(meetingUrl: string): Promise<AttendeeBotRo
 async function keepOneActiveAttendeeBot(meetingUrl: string): Promise<AttendeeBotRow | undefined> {
   const active = await findActiveAttendeeBots(meetingUrl);
   if (!active.length) return undefined;
-  const keep = active.find((row) => isReusableAttendeeBot(row));
+  const keep =
+    active.find((row) => isKnockingOrInCall(row)) ?? active.find((row) => isFreshLaunch(row));
   const extras = active.filter((row) => row.id !== keep?.id);
   await Promise.all(extras.map((row) => attendeeLeave(row.id).catch(() => undefined)));
   return keep;
@@ -352,7 +360,7 @@ async function keepOneActiveAttendeeBot(meetingUrl: string): Promise<AttendeeBot
 
 function isLiveSession(session: BotSession): boolean {
   if (session.status === "in_call") return true;
-  return session.status === "joining" && Date.now() - session.createdAt < FRESH_JOIN_MS;
+  return session.status === "joining" && Date.now() - session.createdAt < STUCK_LAUNCH_MS;
 }
 
 function findLocalActiveSession(meetingUrl: string): BotSession | undefined {
@@ -796,7 +804,30 @@ export async function joinMeetingBot(input: JoinBotInput): Promise<BotSession> {
       if (owned) return owned;
       if (findLocalActiveSession(meetingUrl)) throw new MeetingBotInUseError();
       const existing = await keepOneActiveAttendeeBot(meetingUrl);
-      if (existing) throw new MeetingBotInUseError();
+      if (existing) {
+        if (isKnockingOrInCall(existing) || isFreshLaunch(existing)) {
+          const st = normalizeAttendeeState(existing.state ?? "");
+          const inCall = st.startsWith("joined") || st === "connected";
+          const recovered: BotSession = {
+            id,
+            provider: "attendee",
+            externalId: existing.id,
+            meetingUrl,
+            botName,
+            status: inCall ? "in_call" : "joining",
+            createdAt: now,
+            updatedAt: now,
+            detail: inCall
+              ? "CallIQ Bot is already in Meet"
+              : st === "waiting_room"
+                ? "CallIQ Bot is in the waiting room — admit that one guest"
+                : "CallIQ Bot is launching Chrome — first join after Docker can take ~30s. Admit it when it knocks.",
+          };
+          sessions.set(id, recovered);
+          return recovered;
+        }
+        throw new MeetingBotInUseError();
+      }
       let created: { id: string; raw: unknown };
       try {
         created = await attendeeCreate(meetingUrl, botName);

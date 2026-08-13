@@ -82,7 +82,7 @@ startWithBotBtn.addEventListener("click", async () => {
         return;
       }
       if (res.joined) {
-        setStatus("Bot joining. Stay in Meet — transcript is in the CallIQ side panel.");
+        setStatus("Bot launching — first knock can take 20–45s. Stay in Meet and admit CallIQ Bot.");
         return;
       }
       setStatus("Join the Meet tab. Transcript will appear in the side panel.");
@@ -150,7 +150,7 @@ calliqBtn.addEventListener("click", async () => {
         setStatus(`Error: ${res?.reason ?? "unknown"}`);
         return;
       }
-      setStatus("Bot joining. Stay in Meet — transcript is in the CallIQ side panel.");
+      setStatus("Bot launching — first knock can take 20–45s. Stay in Meet and admit CallIQ Bot.");
     },
   );
 });

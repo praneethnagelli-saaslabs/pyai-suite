@@ -107,7 +107,7 @@ function waitTabComplete(tabId) {
       chrome.tabs.onUpdated.removeListener(onUpdated);
       resolve();
     };
-    const timer = setTimeout(finish, 8000);
+    const timer = setTimeout(finish, 3000);
     function onUpdated(id, info) {
       if (id === tabId && info.status === "complete") {
         clearTimeout(timer);
@@ -127,28 +127,6 @@ function waitTabComplete(tabId) {
       });
     chrome.tabs.onUpdated.addListener(onUpdated);
   });
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function handoffToSidePanel(meetingUrl) {
-  const started = Date.now();
-  await chrome.storage.local.set({
-    pendingCalliqJoin: { meetingUrl, at: started },
-  });
-  for (let i = 0; i < 20; i++) {
-    const { calliqJoinAck } = await chrome.storage.local.get("calliqJoinAck");
-    if (
-      calliqJoinAck?.meetingUrl === meetingUrl &&
-      Number(calliqJoinAck.at) >= started - 500
-    ) {
-      return true;
-    }
-    await sleep(150);
-  }
-  return false;
 }
 
 async function handoffToExistingTab(tab, origin, product, meetingUrl) {
@@ -178,12 +156,10 @@ async function handoffMeeting(meetingUrl) {
   });
 
   if (product === "calliq") {
+    void chrome.storage.local.set({
+      pendingCalliqJoin: { meetingUrl, at: Date.now() },
+    });
     const existing = await findProductTab(origin, "calliq", destTabId);
-    if (destTabId != null && existing?.id != null) {
-      await handoffToExistingTab(existing, origin, "calliq", meetingUrl);
-      return;
-    }
-    if (await handoffToSidePanel(meetingUrl)) return;
     if (existing?.id != null) {
       await handoffToExistingTab(existing, origin, "calliq", meetingUrl);
       return;

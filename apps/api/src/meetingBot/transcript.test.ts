@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   attendeeCreatePayload,
   extractTranscriptFromUnknown,
+  isReusableAttendeeBot,
   joinMeetingBot,
   mapAttendeeBotStatus,
   MeetingBotInUseError,
@@ -84,6 +85,26 @@ describe("mapAttendeeBotStatus", () => {
       .meeting_closed_captions;
     expect(captions.google_meet_language).toBeUndefined();
     expect(body.google_meet_settings).toBeUndefined();
+  });
+
+  it("keeps a waiting-room bot and treats a 45s+ joining bot as stuck", () => {
+    expect(
+      isReusableAttendeeBot({ id: "a", state: "waiting_room", join_at: new Date().toISOString() }),
+    ).toBe(true);
+    expect(
+      isReusableAttendeeBot({
+        id: "b",
+        state: "joining",
+        join_at: new Date(Date.now() - 60_000).toISOString(),
+      }),
+    ).toBe(false);
+    expect(
+      isReusableAttendeeBot({
+        id: "c",
+        state: "joining",
+        join_at: new Date().toISOString(),
+      }),
+    ).toBe(true);
   });
 
   it("uses one dedup key per Meet so a second Send Bot does not spawn another guest", () => {

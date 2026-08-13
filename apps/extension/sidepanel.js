@@ -1,35 +1,22 @@
 const iframe = document.getElementById("app");
 let webOrigin = "http://localhost:3000";
 let pendingUrl = null;
+/** Set only after CallIQ posts calliq.iframe.ready — never guess from iframe.src. */
+let frameOrigin = null;
 
-function targetOrigin() {
-  try {
-    return new URL(iframe.src || webOrigin).origin;
-  } catch {
-    return webOrigin;
-  }
+function allowedOrigin(origin) {
+  return origin === webOrigin;
 }
 
 function postJoin(meetingUrl) {
-  if (!meetingUrl) return false;
+  if (!meetingUrl || !frameOrigin) return false;
   const win = iframe.contentWindow;
   if (!win) return false;
-  const origin = targetOrigin();
-  try {
-    const frameOrigin = win.location.origin;
-    if (frameOrigin.startsWith("chrome-extension:")) return false;
-  } catch {
-    /* cross-origin iframe — CallIQ has loaded */
-  }
-  try {
-    win.postMessage({ type: "calliq.handoff.join", meetingUrl }, origin);
-    void chrome.storage.local.set({
-      calliqJoinAck: { meetingUrl, at: Date.now() },
-    });
-    return true;
-  } catch {
-    return false;
-  }
+  win.postMessage({ type: "calliq.handoff.join", meetingUrl }, frameOrigin);
+  void chrome.storage.local.set({
+    calliqJoinAck: { meetingUrl, at: Date.now() },
+  });
+  return true;
 }
 
 function flushPending() {
@@ -47,10 +34,17 @@ async function loadCalliq() {
   const stored = await chrome.storage.local.get(["webBase"]);
   webOrigin = (stored.webBase || "http://localhost:3000").replace(/\/$/, "");
   const target = `${webOrigin}/calliq`;
-  if (iframe.getAttribute("src") !== target) iframe.src = target;
+  if (iframe.getAttribute("src") !== target) {
+    frameOrigin = null;
+    iframe.src = target;
+  }
 }
 
-iframe.addEventListener("load", () => {
+window.addEventListener("message", (event) => {
+  if (event.source !== iframe.contentWindow) return;
+  if (!allowedOrigin(event.origin)) return;
+  if (event.data?.type !== "calliq.iframe.ready") return;
+  frameOrigin = event.origin;
   flushPending();
 });
 
