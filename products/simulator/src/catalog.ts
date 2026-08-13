@@ -1,9 +1,11 @@
 import { DEFAULT_AGENT, LIVE_VOICES, type AgentConfig } from "./agent.js";
+import { compareEvaluations, evaluateCall, formatTranscript, type Evaluation } from "./eval.js";
 import { BUILTIN_SCENARIOS, sanitizeScenario, type Scenario } from "./scenarios.js";
 
 const MAX_AGENTS = 50;
 const MAX_VERSIONS = 40;
 const MAX_SCENARIOS = 50;
+const MAX_SIMS = 80;
 
 export const PERSONALITIES = [
   "professional",
@@ -46,6 +48,54 @@ export interface StoredAgent {
   versions: AgentVersion[];
   createdAt: number;
   updatedAt: number;
+}
+
+export interface SimulationRecord {
+  id: string;
+  createdAt: number;
+  mode: "manual" | "persona";
+  agentId?: string;
+  agentName: string;
+  version: number;
+  scenarioId?: string;
+  scenarioName?: string;
+  provider: string;
+  fallbackUsed: boolean;
+  fallbackReason?: string;
+  durationMs: number;
+  turnCount: number;
+  interruptions: number;
+  transcript: string;
+  evaluation: Evaluation;
+}
+
+export interface SimulationSummary {
+  id: string;
+  createdAt: number;
+  mode: "manual" | "persona";
+  agentName: string;
+  version: number;
+  scenarioName?: string;
+  provider: string;
+  fallbackUsed: boolean;
+  durationMs: number;
+  score: number;
+  passed: boolean;
+}
+
+export interface SimDraft {
+  mode?: string;
+  agentId?: string;
+  agentName?: string;
+  version?: number;
+  scenarioId?: string;
+  provider?: string;
+  fallbackUsed?: boolean;
+  fallbackReason?: string;
+  durationMs?: number;
+  interruptions?: number;
+  turns?: Array<{ speaker?: string; text?: string }>;
+  transcript?: string;
 }
 
 export interface AgentDraft {
@@ -148,9 +198,26 @@ function composePrompt(src: {
   return bits.join(" ").slice(0, 8_000);
 }
 
+function toSummary(sim: SimulationRecord): SimulationSummary {
+  return {
+    id: sim.id,
+    createdAt: sim.createdAt,
+    mode: sim.mode,
+    agentName: sim.agentName,
+    version: sim.version,
+    scenarioName: sim.scenarioName,
+    provider: sim.provider,
+    fallbackUsed: sim.fallbackUsed,
+    durationMs: sim.durationMs,
+    score: sim.evaluation.scores.overall,
+    passed: sim.evaluation.passed,
+  };
+}
+
 export function createSimulatorCatalog() {
   const agents = new Map<string, StoredAgent>();
   const scenarios = new Map<string, Scenario>();
+  const sims = new Map<string, SimulationRecord>();
 
   const seeded = seedAgent();
   agents.set(seeded.id, seeded);
@@ -258,6 +325,92 @@ export function createSimulatorCatalog() {
       const scn = sanitizeScenario({ ...(input as object), id: current.id, builtIn: false });
       scenarios.set(scn.id, scn);
       return scn;
+    },
+    recordSimulation(draft: SimDraft): SimulationRecord {
+      const mode = draft.mode === "persona" ? "persona" : "manual";
+      const agent = agents.get(clip(draft.agentId, 64));
+      const scenario = scenarios.get(clip(draft.scenarioId, 64));
+      const turns = Array.isArray(draft.turns) ? draft.turns : [];
+      const rawTranscript = String(draft.transcript ?? "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, " ");
+      const transcript =
+        rawTranscript.trim().slice(0, 8_000) ||
+        formatTranscript(
+          turns.map((t) => ({
+            speaker: t.speaker === "agent" ? "agent" : "user",
+            text: String(t.text ?? ""),
+          })),
+        );
+      const durationMs = Math.max(0, Math.min(15 * 60 * 1000, Number(draft.durationMs) || 0));
+      const interruptions = Math.max(0, Math.min(100, Math.floor(Number(draft.interruptions) || 0)));
+      const turnCount = Math.max(turns.filter((t) => String(t.text ?? "").trim()).length, transcript ? 1 : 0);
+      const evaluation = evaluateCall({
+        transcript,
+        scenario,
+        durationMs,
+        turnCount,
+        interruptions,
+        fallbackUsed: Boolean(draft.fallbackUsed),
+      });
+      const sim: SimulationRecord = {
+        id: id("sim"),
+        createdAt: Date.now(),
+        mode,
+        agentId: agent?.id,
+        agentName: clip(draft.agentName, 80) || agent?.name || "Agent",
+        version: Number.isInteger(draft.version) && Number(draft.version) > 0 ? Number(draft.version) : agent?.activeVersion ?? 1,
+        scenarioId: scenario?.id,
+        scenarioName: scenario?.name,
+        provider: clip(draft.provider, 32, "mock") || "mock",
+        fallbackUsed: Boolean(draft.fallbackUsed),
+        fallbackReason: clip(draft.fallbackReason, 40) || undefined,
+        durationMs,
+        turnCount,
+        interruptions,
+        transcript,
+        evaluation,
+      };
+      if (sims.size >= MAX_SIMS) {
+        const oldest = [...sims.values()].sort((a, b) => a.createdAt - b.createdAt)[0];
+        if (oldest) sims.delete(oldest.id);
+      }
+      sims.set(sim.id, sim);
+      return sim;
+    },
+    listSimulations(): SimulationSummary[] {
+      return [...sims.values()].reverse().map(toSummary);
+    },
+    getSimulation(simId: string): SimulationRecord | undefined {
+      return sims.get(clip(simId, 64));
+    },
+    dashboard() {
+      const all = [...sims.values()];
+      const n = all.length;
+      const passed = all.filter((s) => s.evaluation.passed).length;
+      const fallbacks = all.filter((s) => s.fallbackUsed).length;
+      const avg = (pick: (s: SimulationRecord) => number) =>
+        n ? Math.round(all.reduce((sum, s) => sum + pick(s), 0) / n) : 0;
+      return {
+        total: n,
+        passed,
+        failed: n - passed,
+        successRate: n ? Math.round((passed / n) * 1000) / 10 : 0,
+        avgScore: avg((s) => s.evaluation.scores.overall),
+        avgLatencyMs: avg((s) => s.durationMs / Math.max(1, s.turnCount)),
+        fallbackRate: n ? Math.round((fallbacks / n) * 1000) / 10 : 0,
+        recent: [...all].reverse().slice(0, 12).map(toSummary),
+      };
+    },
+    compareSimulations(aId: string, bId: string) {
+      const a = sims.get(clip(aId, 64));
+      const b = sims.get(clip(bId, 64));
+      if (!a || !b) throw new Error("Pick two saved simulations.");
+      return {
+        a: toSummary(a),
+        b: toSummary(b),
+        evalA: a.evaluation,
+        evalB: b.evaluation,
+        deltas: compareEvaluations(a.evaluation, b.evaluation),
+      };
     },
   };
 }

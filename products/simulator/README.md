@@ -1,12 +1,12 @@
 # Voice Agent Simulator
 
-Hamming-style voice lab: live call, versioned agents, scenarios, and an AI customer.
+Hamming-style voice lab: live call, versioned agents, scenarios, AI customer, evals, and compare.
 
 ## Live call
 
 Open http://localhost:3000/simulator → **Live call** → Start simulation.
 
-**Agents** saves named configs as versions (edit → save snapshot → activate to roll back). **Persona** runs an AI customer against a scenario — no microphone. **Scenarios** upgrades the old persona catalog with goals, expected behavior, and failure conditions. **Regression** is still the batch text stress test.
+**Agents** saves named configs as versions (edit → save snapshot → activate to roll back). **Persona** runs an AI customer against a scenario — no microphone. After hangup, the run is scored (goal, adherence, empathy, latency, voice) and stored. **Dashboard** is success rate / latency / fallback rate plus recent runs. **Compare** diffs two saved simulations. **Regression** is still the batch text stress test.
 
 ```
 Browser mic (PCM16 24 kHz)

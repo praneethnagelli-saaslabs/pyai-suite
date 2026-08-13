@@ -545,6 +545,27 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+  simulatorRecord: (body: {
+    mode?: "manual" | "persona";
+    agentId?: string;
+    agentName?: string;
+    version?: number;
+    scenarioId?: string;
+    provider?: string;
+    fallbackUsed?: boolean;
+    fallbackReason?: string;
+    durationMs?: number;
+    interruptions?: number;
+    turns?: Array<{ speaker: string; text: string }>;
+  }) => request<{ simulation: SimulatorSimulation }>("/api/simulator/sims", { method: "POST", body: JSON.stringify(body) }),
+  simulatorSims: () => request<{ simulations: SimulatorSimSummary[] }>("/api/simulator/sims"),
+  simulatorSim: (id: string) =>
+    request<{ simulation: SimulatorSimulation }>(`/api/simulator/sims/${encodeURIComponent(id)}`),
+  simulatorDashboard: () => request<SimulatorDashboard>("/api/simulator/dashboard"),
+  simulatorCompare: (a: string, b: string) =>
+    request<SimulatorCompare>(
+      `/api/simulator/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`,
+    ),
 };
 
 export interface SimulatorAgentVersion {
@@ -594,4 +615,68 @@ export interface SimulatorScenario {
   unknown: string[];
   escalation: string;
   builtIn: boolean;
+}
+
+export interface SimulatorEvalCheck {
+  id: string;
+  label: string;
+  status: "pass" | "fail" | "warn";
+  detail: string;
+}
+
+export interface SimulatorEvaluation {
+  passed: boolean;
+  scores: {
+    overall: number;
+    goal: number;
+    adherence: number;
+    empathy: number;
+    latency: number;
+    voice: number;
+  };
+  checks: SimulatorEvalCheck[];
+  summary: string;
+}
+
+export interface SimulatorSimSummary {
+  id: string;
+  createdAt: number;
+  mode: "manual" | "persona";
+  agentName: string;
+  version: number;
+  scenarioName?: string;
+  provider: string;
+  fallbackUsed: boolean;
+  durationMs: number;
+  score: number;
+  passed: boolean;
+}
+
+export interface SimulatorSimulation extends SimulatorSimSummary {
+  agentId?: string;
+  scenarioId?: string;
+  fallbackReason?: string;
+  turnCount: number;
+  interruptions: number;
+  transcript: string;
+  evaluation: SimulatorEvaluation;
+}
+
+export interface SimulatorDashboard {
+  total: number;
+  passed: number;
+  failed: number;
+  successRate: number;
+  avgScore: number;
+  avgLatencyMs: number;
+  fallbackRate: number;
+  recent: SimulatorSimSummary[];
+}
+
+export interface SimulatorCompare {
+  a: SimulatorSimSummary;
+  b: SimulatorSimSummary;
+  evalA: SimulatorEvaluation;
+  evalB: SimulatorEvaluation;
+  deltas: SimulatorEvaluation["scores"];
 }

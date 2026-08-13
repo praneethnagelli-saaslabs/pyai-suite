@@ -5,3 +5,4 @@ export * from "./scenarios.js";
 export * from "./catalog.js";
 export * from "./customer.js";
 export * from "./speak.js";
+export * from "./eval.js";

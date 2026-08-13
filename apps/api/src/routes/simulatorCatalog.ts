@@ -72,4 +72,43 @@ export async function simulatorCatalogRoutes(app: FastifyInstance, svc: AppServi
       }
     },
   );
+
+  app.post<{ Body: Record<string, unknown> }>("/api/simulator/sims", async (req, reply) => {
+    try {
+      const sim = svc.simulator.recordSimulation(req.body ?? {});
+      app.log.info(
+        {
+          simId: sim.id,
+          agentId: sim.agentId,
+          version: sim.version,
+          passed: sim.evaluation.passed,
+          score: sim.evaluation.scores.overall,
+          provider: sim.provider,
+          fallbackUsed: sim.fallbackUsed,
+        },
+        "simulator.eval.recorded",
+      );
+      return { simulation: sim };
+    } catch (e) {
+      return reply.code(400).send({ error: e instanceof Error ? e.message : "Could not record the simulation." });
+    }
+  });
+
+  app.get("/api/simulator/sims", async () => ({ simulations: svc.simulator.listSimulations() }));
+
+  app.get<{ Params: { id: string } }>("/api/simulator/sims/:id", async (req, reply) => {
+    const sim = svc.simulator.getSimulation(clipId(req.params.id));
+    if (!sim) return reply.code(404).send({ error: "Simulation not found." });
+    return { simulation: sim };
+  });
+
+  app.get("/api/simulator/dashboard", async () => svc.simulator.dashboard());
+
+  app.get<{ Querystring: { a?: string; b?: string } }>("/api/simulator/compare", async (req, reply) => {
+    try {
+      return svc.simulator.compareSimulations(clipId(req.query.a), clipId(req.query.b));
+    } catch (e) {
+      return reply.code(400).send({ error: e instanceof Error ? e.message : "Could not compare." });
+    }
+  });
 }

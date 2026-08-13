@@ -6,6 +6,7 @@ Mechanism:
 - The MockProvider (deterministic, no network) supplies believable, evidence-linked
   outputs for STT/LLM/TTS/Embeddings and a realtime voice session (tone + transcript).
   Simulator persona mode uses the same mock customer script + chatter when no LLM/TTS key is set.
+  Post-call evals are heuristic (no extra model required); Dashboard/Compare work offline on saved runs.
 - Sample datasets live in `evals/<product>/` and `/api/sample/<product>`.
 - UI shows a clear "DEMO DATA" badge whenever synthetic output is shown, so users
   never confuse demo output with a real provider call.

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageHeader, EmptyState } from "@/components/EmptyState";
 import { StatusBadge } from "@/components/StatusBadge";
 import { DemoStages, type DemoStage } from "@/components/DemoStages";
@@ -8,7 +8,9 @@ import { ErrorBanner } from "@/components/ErrorBanner";
 import { CallConsole } from "@/components/simulator/CallConsole";
 import { AgentPanel } from "@/components/simulator/AgentPanel";
 import { ScenarioPanel } from "@/components/simulator/ScenarioPanel";
-import { api } from "@/lib/api";
+import { EvalCard } from "@/components/simulator/EvalCard";
+import { ComparePanel, DashboardPanel } from "@/components/simulator/LabPanels";
+import { api, type SimulatorSimulation } from "@/lib/api";
 import { pickPreferred, sortProviders } from "@/lib/providers";
 import {
   startLiveCall,
@@ -20,7 +22,21 @@ import { upsertTurn } from "@/lib/liveCaption";
 import { cn } from "@/lib/cn";
 
 type Result = Awaited<ReturnType<typeof api.simulatorRun>>;
-type Mode = "call" | "persona" | "agents" | "scenarios" | "regression";
+type Mode = "call" | "persona" | "agents" | "scenarios" | "dashboard" | "compare" | "regression";
+
+async function recordEndedCall(
+  client: ReturnType<typeof useQueryClient>,
+  body: Parameters<typeof api.simulatorRecord>[0],
+): Promise<SimulatorSimulation | null> {
+  try {
+    const out = await api.simulatorRecord(body);
+    void client.invalidateQueries({ queryKey: ["simulator-dashboard"] });
+    void client.invalidateQueries({ queryKey: ["simulator-sims"] });
+    return out.simulation;
+  } catch {
+    return null;
+  }
+}
 
 const DEFAULT_PROMPT = [
   "You are Acme's front-desk voice agent.",
@@ -35,12 +51,13 @@ function isCallScreen(state: CallState): boolean {
 
 export function SimulatorPage() {
   const [mode, setMode] = useState<Mode>("call");
+  const [comparePreset, setComparePreset] = useState<string | null>(null);
   return (
     <div>
       <PageHeader
         kicker="Product"
         title="Simulator"
-        description="Configure an agent, talk to it, or let an AI customer run a scenario."
+        description="Call an agent, score the run, then compare versions."
       />
       <div className="mb-6 flex gap-1 overflow-x-auto border-b border-[var(--hairline)]">
         {(
@@ -49,6 +66,8 @@ export function SimulatorPage() {
             ["persona", "Persona"],
             ["agents", "Agents"],
             ["scenarios", "Scenarios"],
+            ["dashboard", "Dashboard"],
+            ["compare", "Compare"],
             ["regression", "Regression"],
           ] as const
         ).map(([id, label]) => (
@@ -85,12 +104,22 @@ export function SimulatorPage() {
           }}
         />
       ) : null}
+      {mode === "dashboard" ? (
+        <DashboardPanel
+          onOpenCompare={(id) => {
+            setComparePreset(id);
+            setMode("compare");
+          }}
+        />
+      ) : null}
+      {mode === "compare" ? <ComparePanel preset={comparePreset} /> : null}
       {mode === "regression" ? <RegressionPanel /> : null}
     </div>
   );
 }
 
 function LiveCallPanel() {
+  const client = useQueryClient();
   const live = useQuery({ queryKey: ["simulator-live"], queryFn: api.simulatorLive });
   const agents = useQuery({ queryKey: ["simulator-agents"], queryFn: api.simulatorAgents });
   const [agentId, setAgentId] = useState(() => sessionStorage.getItem("sim.agentId") ?? "agt_acme");
@@ -110,6 +139,8 @@ function LiveCallPanel() {
   const [error, setError] = useState<string | null>(null);
   const [turns, setTurns] = useState<CallTurn[]>([]);
   const [trace, setTrace] = useState<CallTraceEvent[] | null>(null);
+  const [evalSim, setEvalSim] = useState<SimulatorSimulation | null>(null);
+  const turnsRef = useRef<CallTurn[]>([]);
   const ctl = useRef<{ interrupt: () => void; mute: (on: boolean) => void; end: () => void } | null>(null);
   const [onCall, setOnCall] = useState(false);
   const inCall = onCall && isCallScreen(state);
@@ -118,7 +149,9 @@ function LiveCallPanel() {
     setError(null);
     setNotice(null);
     setTrace(null);
+    setEvalSim(null);
     setTurns([]);
+    turnsRef.current = [];
     setMuted(false);
     setStartedAt(Date.now());
     setOnCall(true);
@@ -137,7 +170,11 @@ function LiveCallPanel() {
             setNotice(info.message ?? null);
           },
           onTurn: (turn) => {
-            setTurns((prev) => upsertTurn(prev, turn));
+            setTurns((prev) => {
+              const next = upsertTurn(prev, turn);
+              turnsRef.current = next;
+              return next;
+            });
           },
           onLevel: setLevel,
           onError: (message) => {
@@ -151,6 +188,19 @@ function LiveCallPanel() {
             setProvider(info.provider || provider);
             setFallbackUsed(info.fallbackUsed);
             ctl.current = null;
+            const picked = agents.data?.agents.find((a) => a.id === agentId);
+            void recordEndedCall(client, {
+              mode: "manual",
+              agentId,
+              agentName: name,
+              version: picked?.activeVersion,
+              provider: info.provider,
+              fallbackUsed: info.fallbackUsed,
+              fallbackReason: info.fallbackReason,
+              durationMs: info.durationMs,
+              interruptions: info.trace.filter((e) => e.type === "interrupted").length,
+              turns: turnsRef.current.map((t) => ({ speaker: t.speaker, text: t.text })),
+            }).then(setEvalSim);
           },
         },
         { forceProvider: forceProvider === "auto" ? undefined : forceProvider, agentId },
@@ -272,7 +322,8 @@ function LiveCallPanel() {
             </div>
           </section>
           {error ? <ErrorBanner title="Call failed" message={error} onRetry={() => void start()} /> : null}
-          {state === "ended" && !trace?.length ? (
+          {evalSim ? <EvalCard sim={evalSim} /> : null}
+          {state === "ended" && !trace?.length && !evalSim ? (
             <EmptyState title="Call ended" body="Start again to talk to the agent." actionLabel="Start simulation" onAction={() => void start()} />
           ) : null}
           {trace?.length ? (
@@ -299,6 +350,7 @@ function LiveCallPanel() {
 }
 
 function PersonaCallPanel() {
+  const client = useQueryClient();
   const live = useQuery({ queryKey: ["simulator-live"], queryFn: api.simulatorLive });
   const agents = useQuery({ queryKey: ["simulator-agents"], queryFn: api.simulatorAgents });
   const scenarios = useQuery({ queryKey: ["simulator-scenarios"], queryFn: api.simulatorScenarios });
@@ -315,6 +367,8 @@ function PersonaCallPanel() {
   const [error, setError] = useState<string | null>(null);
   const [turns, setTurns] = useState<CallTurn[]>([]);
   const [trace, setTrace] = useState<CallTraceEvent[] | null>(null);
+  const [evalSim, setEvalSim] = useState<SimulatorSimulation | null>(null);
+  const turnsRef = useRef<CallTurn[]>([]);
   const ctl = useRef<{ interrupt: () => void; mute: (on: boolean) => void; end: () => void } | null>(null);
   const [onCall, setOnCall] = useState(false);
   const agent = agents.data?.agents.find((a) => a.id === agentId) ?? agents.data?.agents[0];
@@ -329,7 +383,9 @@ function PersonaCallPanel() {
     setError(null);
     setNotice(null);
     setTrace(null);
+    setEvalSim(null);
     setTurns([]);
+    turnsRef.current = [];
     setMuted(false);
     setStartedAt(Date.now());
     setOnCall(true);
@@ -353,7 +409,11 @@ function PersonaCallPanel() {
             setNotice(info.message ?? null);
           },
           onTurn: (turn) => {
-            setTurns((prev) => upsertTurn(prev, turn));
+            setTurns((prev) => {
+              const next = upsertTurn(prev, turn);
+              turnsRef.current = next;
+              return next;
+            });
           },
           onLevel: setLevel,
           onError: (message) => {
@@ -367,6 +427,19 @@ function PersonaCallPanel() {
             setProvider(info.provider || provider);
             setFallbackUsed(info.fallbackUsed);
             ctl.current = null;
+            void recordEndedCall(client, {
+              mode: "persona",
+              agentId: agent.id,
+              agentName: agent.name,
+              version: agent.activeVersion,
+              scenarioId: scenario.id,
+              provider: info.provider,
+              fallbackUsed: info.fallbackUsed,
+              fallbackReason: info.fallbackReason,
+              durationMs: info.durationMs,
+              interruptions: info.trace.filter((e) => e.type === "interrupted").length,
+              turns: turnsRef.current.map((t) => ({ speaker: t.speaker, text: t.text })),
+            }).then(setEvalSim);
           },
         },
         {
@@ -463,6 +536,7 @@ function PersonaCallPanel() {
             </div>
           </section>
           {error ? <ErrorBanner title="Persona run failed" message={error} onRetry={() => void start()} /> : null}
+          {evalSim ? <EvalCard sim={evalSim} /> : null}
           {trace?.length ? (
             <section className="panel p-4">
               <h3 className="text-sm font-semibold text-ink-900">Trace</h3>
