@@ -80,7 +80,7 @@ describe("mapAttendeeBotStatus", () => {
     const captions = (body.transcription_settings as { meeting_closed_captions: Record<string, unknown> })
       .meeting_closed_captions;
     expect(captions.google_meet_language).toBeUndefined();
-    expect((body.google_meet_settings as { ui_interaction_mode: string }).ui_interaction_mode).toBe("robotic");
+    expect(body.google_meet_settings).toBeUndefined();
   });
 
   it("uses one dedup key per Meet so a second Send Bot does not spawn another guest", () => {

@@ -600,18 +600,11 @@ export function CallIQPage() {
     let leftAt: number | null = null;
     let lastText = "";
     let openedTranscript = false;
-    let joiningPolls = 0;
     while (!pollAbort.current) {
       const st = await api.calliqBotStatus(botId);
       const hasLines = Boolean(st.transcriptText?.trim());
       const inMeeting = st.status === "joining" || st.status === "in_call";
-      if (st.status === "joining") joiningPolls += 1;
-      else joiningPolls = 0;
-      setBotNote(
-        joiningPolls >= 20
-          ? "Google is blocking the guest bot (“You can’t join this video call”). Start a new Meet, allow anyone with the link, admit CallIQ Bot once, then speak."
-          : `${st.status}${st.detail ? ` · ${st.detail}` : ""}`,
-      );
+      setBotNote(`${st.status}${st.detail ? ` · ${st.detail}` : ""}`);
       const botLeft =
         st.status === "waiting_transcript" || st.status === "done" || st.status === "failed";
       if (inMeeting) leftAt = null;
@@ -1011,9 +1004,9 @@ export function CallIQPage() {
             ) : null}
             {botNote ? <p className="text-xs text-ink-500">{botNote}</p> : null}
             <p className="text-[11px] text-ink-400">
-              Admit <span className="font-medium text-ink-600">one</span> CallIQ Bot. If two knock, admit one and
-              deny the other — two bots in the same Meet breaks captions. Host: allow guests. If Google blocks the
-              guest, start a <span className="font-medium text-ink-600">new Meet</span> and send the bot once.
+              Watch Meet → People. Admit <span className="font-medium text-ink-600">one</span> CallIQ Bot (deny extras).
+              Host: anyone with the link can ask to join. The bot can sit in “joining” for a minute while Chrome
+              knocks — that is not a Google block.
             </p>
           </div>
 

@@ -2,11 +2,10 @@
 
 ## CallIQ — bot joins the call with you
 
-1. Load unpacked from `apps/extension` (`chrome://extensions` → Developer mode)
-2. In CallIQ click **Start call with CallIQ Bot** (or the same button in the extension popup)
-3. Google Meet opens — join the room
-4. When Meet gets a real room code, the extension sends CallIQ Bot into **that same meeting**
-5. Admit **CallIQ Bot** in the waiting room
+1. Load unpacked from `apps/extension` (`chrome://extensions` → Developer mode). **Reload the extension after every pull.**
+2. If you are **already in Meet**, click **Bring bot into this Meet** (or Start call — it now uses the open Meet tab).
+3. If you are not in Meet, **Start call with CallIQ Bot** opens a new room, then sends the bot when the code appears.
+4. Admit **one** CallIQ Bot (People → waiting room). Host “quick access” may skip the admit prompt — look at the participant list.
 
 **I’m already in Meet — bring bot** finds your open Meet tab and sends the bot there.
 

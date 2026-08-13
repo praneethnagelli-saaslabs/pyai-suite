@@ -53,22 +53,28 @@ async function detectMeetTab() {
   }
 }
 
-startWithBotBtn.addEventListener("click", () => {
-  setStatus("Opening Meet — bot will join the same room…");
+startWithBotBtn.addEventListener("click", async () => {
+  await detectMeetTab();
+  const alreadyInMeet = Boolean(activeMeetUrl);
+  setStatus(
+    alreadyInMeet
+      ? "Sending CallIQ Bot into this Meet…"
+      : "Opening Meet — bot will join the same room…",
+  );
   chrome.runtime.sendMessage(
-    { type: "calliq.startWithBot", createNew: true, webOrigin: undefined },
-    async (res) => {
+    {
+      type: "calliq.startWithBot",
+      createNew: !alreadyInMeet,
+      meetTabId: alreadyInMeet ? activeMeetTabId : undefined,
+      webOrigin: await getWebBase(),
+    },
+    (res) => {
       if (!res?.ok) {
         setStatus(`Error: ${res?.reason ?? "unknown"}`);
         return;
       }
       if (res.joined) {
-        setStatus("Bot joining…");
-        const web = await getWebBase();
-        await chrome.tabs.create({
-          url: `${web.replace(/\/$/, "")}/calliq?join=${encodeURIComponent(res.joined)}`,
-          active: false,
-        });
+        setStatus("CallIQ opened — admit CallIQ Bot once (check people / waiting room).");
         return;
       }
       setStatus("Join the Meet tab. Bot follows when the room is ready.");
@@ -130,17 +136,12 @@ calliqBtn.addEventListener("click", async () => {
       meetTabId: activeMeetTabId,
       webOrigin: await getWebBase(),
     },
-    async (res) => {
+    (res) => {
       if (!res?.ok) {
         setStatus(`Error: ${res?.reason ?? "unknown"}`);
         return;
       }
-      const web = await getWebBase();
-      const url = res.joined || activeMeetUrl;
-      await chrome.tabs.create({
-        url: `${web.replace(/\/$/, "")}/calliq?join=${encodeURIComponent(url)}`,
-        active: true,
-      });
+      setStatus("CallIQ opened — admit CallIQ Bot once (check people / waiting room).");
     },
   );
 });

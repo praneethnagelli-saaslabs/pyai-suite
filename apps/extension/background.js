@@ -118,28 +118,35 @@ async function startFollowMe(opts) {
   };
   await chrome.storage.local.set({ calliqFollowMe: true, followMeProduct: product });
 
-  // Already on a real Meet? Hand off immediately.
-  if (opts.meetTabId != null) {
-    const tab = await chrome.tabs.get(opts.meetTabId).catch(() => null);
-    const url = extractMeetingUrl(tab?.url || "");
-    if (url && !isNewMeetUrl(tab.url)) {
-      await handoffMeeting(url);
-      return { ok: true, joined: url, product };
+  async function existingMeet() {
+    if (opts.meetTabId != null) {
+      const tab = await chrome.tabs.get(opts.meetTabId).catch(() => null);
+      const url = extractMeetingUrl(tab?.url || "");
+      if (url && !isNewMeetUrl(tab.url || "")) {
+        return { tabId: tab.id, url };
+      }
     }
+    const tabs = await chrome.tabs.query({
+      url: ["https://meet.google.com/*", "https://*.zoom.us/*", "https://teams.microsoft.com/*"],
+    });
+    for (const tab of tabs) {
+      const url = extractMeetingUrl(tab.url || "");
+      if (url && !isNewMeetUrl(tab.url || "")) return { tabId: tab.id, url };
+    }
+    return null;
+  }
+
+  const already = await existingMeet();
+  if (already) {
+    followMe.meetTabId = already.tabId;
+    await handoffMeeting(already.url);
+    return { ok: true, joined: already.url, product };
   }
 
   if (opts.createNew === false) {
     const tabs = await chrome.tabs.query({
       url: ["https://meet.google.com/*", "https://*.zoom.us/*", "https://teams.microsoft.com/*"],
     });
-    for (const tab of tabs) {
-      const url = extractMeetingUrl(tab.url || "");
-      if (url && !isNewMeetUrl(tab.url || "")) {
-        followMe.meetTabId = tab.id;
-        await handoffMeeting(url);
-        return { ok: true, joined: url, product };
-      }
-    }
     const pending = tabs.find((t) => isNewMeetUrl(t.url || ""));
     if (pending?.id != null) {
       followMe.meetTabId = pending.id;
@@ -150,7 +157,7 @@ async function startFollowMe(opts) {
       reason:
         product === "brief"
           ? "No Google Meet tab found. Open Meet, or use Open Meet + Brief."
-          : "No Google Meet tab found. Start a call first, or use Start call with CallIQ Bot.",
+          : "No Google Meet tab found. Join Meet first, then click Bring bot into this Meet.",
     };
   }
 

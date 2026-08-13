@@ -125,7 +125,25 @@ type AttendeeBotRow = {
   meeting_url?: string;
   state?: string;
   deduplication_key?: string | null;
+  join_at?: string;
 };
+
+const FRESH_JOIN_MS = 25_000;
+
+function isFreshJoin(row: AttendeeBotRow): boolean {
+  const at = row.join_at ? Date.parse(row.join_at) : NaN;
+  if (!Number.isFinite(at)) return false;
+  return Date.now() - at < FRESH_JOIN_MS;
+}
+
+function isReusableAttendeeBot(row: AttendeeBotRow): boolean {
+  const st = normalizeAttendeeState(row.state ?? "");
+  if (st.startsWith("joined") || st === "connected") return true;
+  if (st === "joining" || st === "waiting_room" || st === "staged" || st === "ready") {
+    return isFreshJoin(row);
+  }
+  return false;
+}
 
 const ATTENDEE_ACTIVE_JOIN_STATES = new Set([
   "joining",
@@ -263,12 +281,8 @@ export function attendeeCreatePayload(meetingUrl: string, botName: string): Reco
       silence_activate_after_seconds: 120,
     },
   };
-  if (/meet\.google\.com/i.test(meetingUrl)) {
-    payload.google_meet_settings = {
-      use_login: false,
-      ui_interaction_mode: "robotic",
-    };
-  }
+  // Do not set google_meet_settings.ui_interaction_mode=robotic — Google then
+  // shows “You can't join this video call” instead of the waiting-room knock.
   payload.deduplication_key = meetingDedupKey(meetingUrl);
   return payload;
 }
@@ -314,11 +328,12 @@ async function findActiveAttendeeBots(meetingUrl: string): Promise<AttendeeBotRo
   return [...seen.values()];
 }
 
-/** Keep one live bot for this Meet; tell extras to leave so Admit does not let two guests in. */
+/** Keep one live bot for this Meet; drop stale joining zombies so a new knock can happen. */
 async function keepOneActiveAttendeeBot(meetingUrl: string): Promise<AttendeeBotRow | undefined> {
   const active = await findActiveAttendeeBots(meetingUrl);
   if (!active.length) return undefined;
-  const [keep, ...extras] = active;
+  const keep = active.find((row) => isReusableAttendeeBot(row));
+  const extras = active.filter((row) => row.id !== keep?.id);
   await Promise.all(extras.map((row) => attendeeLeave(row.id).catch(() => undefined)));
   return keep;
 }
@@ -327,16 +342,23 @@ function findLocalActiveSession(meetingUrl: string): BotSession | undefined {
   for (const session of sessions.values()) {
     if (session.provider !== "attendee") continue;
     if (!sameMeetingUrl(session.meetingUrl, meetingUrl)) continue;
-    if (session.status === "joining" || session.status === "in_call") return session;
+    if (session.status === "in_call") return session;
+    if (session.status === "joining" && Date.now() - session.createdAt < FRESH_JOIN_MS) return session;
   }
   return undefined;
 }
 
-async function attendeeCreate(meetingUrl: string, botName: string): Promise<{ id: string; raw: unknown }> {
+async function attendeeCreate(
+  meetingUrl: string,
+  botName: string,
+  dedupKey?: string,
+): Promise<{ id: string; raw: unknown }> {
+  const payload = attendeeCreatePayload(meetingUrl, botName);
+  if (dedupKey) payload.deduplication_key = dedupKey;
   const r = await fetch(`${attendeeBase()}/api/v1/bots`, {
     method: "POST",
     headers: attendeeHeaders(),
-    body: JSON.stringify(attendeeCreatePayload(meetingUrl, botName)),
+    body: JSON.stringify(payload),
   });
   const text = await r.text();
   if (!r.ok) throw new Error(`attendee create ${summarizeHttpError(r.status, text)}`);
@@ -460,7 +482,7 @@ export function mapAttendeeBotStatus(input: {
     detail:
       label && label !== "joining" && label !== "join_requested"
         ? label
-        : "joining — admit CallIQ Bot. If Meet says “You can’t join this video call”, Google blocked the guest: start a new Meet, allow anyone with the link, send the bot once.",
+        : "waiting for you to admit CallIQ Bot (People / waiting room)",
     leftMeet: false,
   };
 }
@@ -758,7 +780,7 @@ export async function joinMeetingBot(input: JoinBotInput): Promise<BotSession> {
       } catch (createErr) {
         const msg = createErr instanceof Error ? createErr.message : String(createErr);
         const raced = await keepOneActiveAttendeeBot(meetingUrl);
-        if (raced && /dedup|already exists|non-terminal/i.test(msg)) {
+        if (raced && isReusableAttendeeBot(raced) && /dedup|already exists|non-terminal/i.test(msg)) {
           const session: BotSession = {
             id,
             provider: "attendee",
@@ -773,7 +795,11 @@ export async function joinMeetingBot(input: JoinBotInput): Promise<BotSession> {
           sessions.set(id, session);
           return session;
         }
-        throw createErr;
+        if (/dedup|already exists|non-terminal/i.test(msg)) {
+          created = await attendeeCreate(meetingUrl, botName, `${meetingDedupKey(meetingUrl)}-${now}`);
+        } else {
+          throw createErr;
+        }
       }
       const session: BotSession = {
         id,
