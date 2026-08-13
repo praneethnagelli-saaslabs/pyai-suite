@@ -8,8 +8,6 @@ const briefOpenBtn = document.getElementById("brief-open");
 const briefCaptureBtn = document.getElementById("brief-capture");
 const meetUrlEl = document.getElementById("meet-url");
 
-let mediaRecorder = null;
-let chunks = [];
 let activeMeetUrl = null;
 let activeMeetTabId = null;
 
@@ -171,58 +169,15 @@ goBtn.addEventListener("click", () => {
   });
 });
 
-async function startRec() {
-  chunks = [];
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  mediaRecorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : undefined });
-  mediaRecorder.ondataavailable = (e) => {
-    if (e.data.size) chunks.push(e.data);
-  };
-  mediaRecorder.onstop = async () => {
-    stream.getTracks().forEach((t) => t.stop());
-    const blob = new Blob(chunks, { type: "audio/webm" });
-    const buf = await blob.arrayBuffer();
-    const bytes = new Uint8Array(buf);
-    let binary = "";
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-    const audioBase64 = btoa(binary);
-    setStatus("Transcribing…");
-    chrome.runtime.sendMessage(
-      { type: "scrib.transcribe", audioBase64, format: "webm", appName: "browser" },
-      (res) => {
-        if (!res?.ok) {
-          setStatus(`Error: ${res?.reason ?? "unknown"}`);
-          return;
-        }
-        rawEl.value = res.out?.cleaned ?? res.out?.transcript ?? "";
-        setStatus("Inserted into active tab");
-      },
-    );
-  };
-  mediaRecorder.start();
-  micBtn.classList.add("rec");
-  micBtn.textContent = "Recording… release to stop";
-  setStatus("Recording");
-}
-
-function stopRec() {
-  if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
-  micBtn.classList.remove("rec");
-  micBtn.textContent = "Hold to record (mic)";
-}
-
-micBtn.addEventListener("mousedown", () => {
-  startRec().catch((e) => setStatus(String(e)));
-});
-micBtn.addEventListener("mouseup", stopRec);
-micBtn.addEventListener("mouseleave", stopRec);
-micBtn.addEventListener("touchstart", (e) => {
-  e.preventDefault();
-  startRec().catch((err) => setStatus(String(err)));
-});
-micBtn.addEventListener("touchend", (e) => {
-  e.preventDefault();
-  stopRec();
+micBtn.addEventListener("click", async () => {
+  setStatus("Opening Scrib recorder… allow the microphone there.");
+  await chrome.windows.create({
+    url: chrome.runtime.getURL("recorder.html"),
+    type: "popup",
+    width: 400,
+    height: 280,
+    focused: true,
+  });
 });
 
 detectMeetTab().catch(() => {});

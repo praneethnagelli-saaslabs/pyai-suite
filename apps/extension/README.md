@@ -20,7 +20,7 @@ The extension only hands Brief the Meet URL. Capture stays in the app (tab audio
 
 ## Scrib dictation
 
-Hold-to-record in the popup, or `Cmd/Ctrl+Shift+Space` for a demo insert into the focused field.
+Popup → **Record dictation** opens a small window (the popup cannot keep Chrome’s mic prompt open). Allow the microphone for PyAI Suite if asked. `Cmd/Ctrl+Shift+Space` still inserts a demo line into the focused field.
 
 ## Security
 

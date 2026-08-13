@@ -101,6 +101,7 @@ export function CallIQPage() {
   const pollAbort = useRef(false);
   const joinInFlight = useRef(false);
   const resumeStarted = useRef(false);
+  const queuedJoin = useRef<string | null>(null);
   const audioCtx = useRef<AudioContext | null>(null);
   const demoAudio = useRef<HTMLAudioElement | null>(null);
   const demoObjectUrl = useRef<string | null>(null);
@@ -256,6 +257,11 @@ export function CallIQPage() {
         if (!url || !isUsableMeetingUrl(url)) return;
         setAwaitingFollowMe(false);
         setShowJoin(true);
+        if (joinInFlight.current) {
+          queuedJoin.current = url;
+          pollAbort.current = true;
+          return;
+        }
         void joinBot(url);
         return;
       }
@@ -399,6 +405,7 @@ export function CallIQPage() {
   useEffect(() => {
     if (resumeStarted.current) return;
     resumeStarted.current = true;
+    const timer = window.setTimeout(() => {
     void (async () => {
       let live = loadLiveBot();
       if (!live) {
@@ -436,6 +443,8 @@ export function CallIQPage() {
       }
       if (live && !joinInFlight.current) await resumeLiveBot(live);
     })();
+    }, 1000);
+    return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -839,11 +848,20 @@ export function CallIQPage() {
       setBotBusy(false);
       setBotSessionId(null);
       setLeavingBot(false);
+      pollAbort.current = false;
+      const next = queuedJoin.current;
+      queuedJoin.current = null;
+      if (next) void joinBot(next);
     }
   }
 
   async function joinBot(urlOverride?: string) {
-    if (joinInFlight.current) return;
+    if (joinInFlight.current) {
+      const rawQueued = (urlOverride ?? meetUrl).trim();
+      const next = extractMeetingUrl(rawQueued) ?? rawQueued;
+      if (isUsableMeetingUrl(next)) queuedJoin.current = next;
+      return;
+    }
     const raw = (urlOverride ?? meetUrl).trim();
     const url = extractMeetingUrl(raw) ?? raw;
     if (botBusy && (extractMeetingUrl(meetUrl) ?? meetUrl) === url) {
@@ -852,8 +870,16 @@ export function CallIQPage() {
     }
     const existingLive = loadLiveBot();
     if (existingLive && extractMeetingUrl(existingLive.meetingUrl) === extractMeetingUrl(url)) {
-      void resumeLiveBot(existingLive);
-      return;
+      try {
+        const st = await api.calliqBotStatus(existingLive.botId);
+        if (st.status === "joining" || st.status === "in_call" || st.status === "waiting_transcript") {
+          void resumeLiveBot(existingLive);
+          return;
+        }
+      } catch {
+        /* stale — send a new bot */
+      }
+      saveLiveBot(null);
     }
     if (!isUsableMeetingUrl(url)) {
       setError("Need a real Meet/Zoom/Teams link (not meet.google.com/new).");
@@ -907,6 +933,10 @@ export function CallIQPage() {
       setBotBusy(false);
       setBotSessionId(null);
       setLeavingBot(false);
+      pollAbort.current = false;
+      const next = queuedJoin.current;
+      queuedJoin.current = null;
+      if (next && next !== url) void joinBot(next);
     }
   }
 

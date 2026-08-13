@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Scrib dictation</title>
+    <style>
+      body { font: 13px/1.4 system-ui, sans-serif; margin: 16px; color: #111b26; }
+      button { width: 100%; padding: 10px; border: 0; border-radius: 8px; background: #0d9488; color: #fff; font-weight: 600; cursor: pointer; }
+      button.rec { background: #b42318; }
+      button.secondary { background: #1e3a4c; margin-top: 8px; }
+      button:disabled { opacity: 0.5; }
+      #status { min-height: 1.3em; margin: 8px 0 12px; color: #0d9488; font-size: 12px; }
+      #status.err { color: #b42318; }
+      p { color: #6b8199; font-size: 11px; margin: 12px 0 0; }
+    </style>
+  </head>
+  <body>
+    <strong>Scrib dictation</strong>
+    <div id="status">Click Start, then allow the microphone if Chrome asks.</div>
+    <button id="toggle">Start recording</button>
+    <button id="insert" class="secondary" disabled>Insert into page</button>
+    <p>
+      The extension popup cannot keep the mic prompt open — that is why this window exists.
+      If Chrome blocks the mic, allow it for <strong>PyAI Suite</strong> in
+      <code>chrome://settings/content/microphone</code>.
+    </p>
+    <script src="recorder.js"></script>
+  </body>
+</html>

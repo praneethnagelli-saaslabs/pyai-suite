@@ -129,22 +129,23 @@ function waitTabComplete(tabId) {
   });
 }
 
-async function sidePanelIsOpen() {
-  if (!chrome.runtime.getContexts) return false;
-  const ctx = await chrome.runtime.getContexts({ contextTypes: ["SIDE_PANEL"] });
-  return ctx.length > 0;
-}
-
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function handoffToSidePanel(meetingUrl) {
+  const started = Date.now();
   await chrome.storage.local.set({
-    pendingCalliqJoin: { meetingUrl, at: Date.now() },
+    pendingCalliqJoin: { meetingUrl, at: started },
   });
-  for (let i = 0; i < 10; i++) {
-    if (await sidePanelIsOpen()) return true;
+  for (let i = 0; i < 20; i++) {
+    const { calliqJoinAck } = await chrome.storage.local.get("calliqJoinAck");
+    if (
+      calliqJoinAck?.meetingUrl === meetingUrl &&
+      Number(calliqJoinAck.at) >= started - 500
+    ) {
+      return true;
+    }
     await sleep(150);
   }
   return false;

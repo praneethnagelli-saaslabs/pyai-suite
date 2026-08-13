@@ -71,7 +71,7 @@ Unpacked MV3 in `apps/extension` — CallIQ bot join, Brief Meet capture, and Sc
 |-----|-----|
 | **CallIQ** | Popup → **Start call with CallIQ Bot** or **Bring bot into this Meet**. Stay in Meet — transcript is in the CallIQ **side panel** (not a new tab). Admit **one** CallIQ Bot. |
 | **Brief** | Popup → **Open Meet + Brief**, or join Meet first → **Capture this Meet in Brief**. In Brief, share the Meet tab with tab audio on (no bot). |
-| **Scrib** | Hold-to-record in the popup, or `Cmd/Ctrl+Shift+Space` to insert into the focused field. |
+| **Scrib** | Popup → **Record dictation** (small window — allow the mic there). Or `Cmd/Ctrl+Shift+Space` to insert into the focused field. |
 
 Reload the extension after every code change. More detail: [apps/extension/README.md](apps/extension/README.md). Provider keys stay in API `.env` — the extension never sees them.
 
