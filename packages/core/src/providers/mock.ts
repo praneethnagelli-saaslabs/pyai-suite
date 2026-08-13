@@ -311,8 +311,49 @@ function mockCallIQNotes(source: string): Record<string, unknown> {
   };
 }
 
+function mockMeetingAnswer(source: string): Record<string, unknown> {
+  const question = (source.match(/QUESTION:\s*([\s\S]*?)\n\nEXCERPTS:/i)?.[1] ?? "").trim();
+  const excerpts = (source.match(/EXCERPTS:\s*([\s\S]*?)(?:\n\nAnswer using|$)/i)?.[1] ?? "").trim();
+  if (!excerpts || /^\[none\]$/i.test(excerpts)) {
+    return { answer: "I don't have that in stored meetings.", grounded: false };
+  }
+  const q = question.toLowerCase();
+  const hay = excerpts.toLowerCase();
+  const tokens = q
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .split(/\s+/)
+    .filter((w) => w.length >= 3);
+  const overlap = tokens.filter((t) => hay.includes(t));
+  if (tokens.length && overlap.length === 0 && !/august|launch|security|pricing/.test(q)) {
+    return { answer: "I don't have that in stored meetings.", grounded: false };
+  }
+  if (/launch|august/.test(q) && /august|launch/.test(hay)) {
+    return {
+      answer: "The group decided to move the product launch from July to August.",
+      grounded: true,
+    };
+  }
+  if (/security/.test(q) && /security/.test(hay)) {
+    return {
+      answer: "Jordan owns the security pack, due Friday.",
+      grounded: true,
+    };
+  }
+  const line = excerpts
+    .split(/\n+/)
+    .map((l) => l.trim())
+    .find((l) => l && !l.startsWith("[") && !/^kind=|^Evidence:/i.test(l) && !/^meeting=/i.test(l));
+  if (line) {
+    return { answer: line.slice(0, 280), grounded: true };
+  }
+  return { answer: "I don't have that in stored meetings.", grounded: false };
+}
+
 function buildMockJson(schema: Record<string, unknown>, source: string): Record<string, unknown> {
   const props = (schema.properties ?? {}) as Record<string, { type?: string; items?: { type?: string } }>;
+  if ("grounded" in props && "answer" in props && !("decisions" in props)) {
+    return mockMeetingAnswer(source);
+  }
   const isBrief = "decisions" in props && "actionItems" in props && "importantMoments" in props;
   if (isBrief) return mockBriefNotes(source);
   const isCallIQ = "dealHealthScore" in props && "objections" in props && "followUpEmail" in props;

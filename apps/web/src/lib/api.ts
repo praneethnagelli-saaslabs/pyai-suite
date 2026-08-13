@@ -478,7 +478,17 @@ export const api = {
   briefSearch: (q: string) =>
     request<{
       query: string;
-      results: Array<{ meetingId: string; date: string; answer: string; evidence: string }>;
+      answer: string | null;
+      grounded: boolean;
+      backend: "memory" | "postgres";
+      results: Array<{
+        meetingId: string;
+        date: string;
+        title?: string;
+        kind?: string;
+        answer: string;
+        evidence: string;
+      }>;
       meetings: Array<{ id: string; date: string; title: string; mode: string }>;
     }>(`/api/brief/search?q=${encodeURIComponent(q)}`),
 

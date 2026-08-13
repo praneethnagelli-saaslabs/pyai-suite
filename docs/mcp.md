@@ -7,7 +7,7 @@ added only where it provides real developer/agent value — not for marketing.
 Exposes these tools, each backed by the same platform services the UI uses:
 
 ```
-search_meetings      query meeting memory (semantic + keyword)
+search_meetings      query meeting memory (embeddings + LLM answer)
 get_meeting          fetch a meeting + notes + decisions + action items
 search_calls         query calls (e.g. "pricing mentioned")
 get_call             fetch a call + analysis

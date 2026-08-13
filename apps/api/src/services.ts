@@ -1,6 +1,6 @@
-import { createPlatform, type Platform } from "@pyai/core";
+import { Capability, createPlatform, type Platform } from "@pyai/core";
 import { MeetingMemory } from "@pyai/brief";
-import { createRunStore, type RunStore } from "@pyai/db";
+import { createMeetingStore, createRunStore, type RunStore } from "@pyai/db";
 import { createJobQueue, type JobQueue, InMemoryQueue } from "@pyai/worker";
 import { createSimulatorCatalog, type SimulatorCatalog } from "@pyai/simulator";
 
@@ -23,6 +23,16 @@ export async function createServices(): Promise<AppServices> {
     gemini: { apiKey: process.env.GEMINI_API_KEY },
   });
   const runStore = await createRunStore(process.env.DATABASE_URL);
+  const meetingStore = await createMeetingStore(process.env.DATABASE_URL);
+  const embeddings =
+    platform.registry.getAdapterFor(Capability.EMBEDDINGS)?.asEmbeddings?.() ??
+    platform.registry.getAdapterFor(Capability.EMBEDDINGS, "mock")?.asEmbeddings?.();
+  const llm =
+    platform.registry.getAdapterFor(Capability.LLM)?.asLLM?.() ??
+    platform.registry.getAdapterFor(Capability.LLM, "mock")?.asLLM?.();
+  if (!embeddings || !llm) {
+    throw new Error("meeting memory needs embeddings and LLM adapters");
+  }
   // API enqueues only — worker process owns the BullMQ consumer when REDIS_URL is set.
   let jobs: JobQueue;
   try {
@@ -32,7 +42,7 @@ export async function createServices(): Promise<AppServices> {
   }
   return {
     platform,
-    meetingMemory: new MeetingMemory(),
+    meetingMemory: new MeetingMemory(meetingStore, embeddings, llm),
     runStore,
     jobs,
     simulator: createSimulatorCatalog(),

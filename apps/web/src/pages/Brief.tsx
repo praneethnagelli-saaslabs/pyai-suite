@@ -458,7 +458,7 @@ export function BriefPage() {
     setStages([
       { id: "hear", label: "Hear (transcript ready)", detail: "inline" },
       { id: "summary", label: "Summary — meeting notes…", detail: llmProvider },
-      { id: "memory", label: "Store in meeting memory…", detail: "local" },
+      { id: "memory", label: "Store in meeting memory…", detail: "waiting" },
     ]);
     try {
       const out = await api.briefAnalyze({
@@ -707,7 +707,7 @@ export function BriefPage() {
       <PageHeader
         kicker="Product"
         title="Brief"
-        description="Hear transcribes. Summary writes decisions, actions, and a keepable brief."
+        description="Hear transcribes. Summary writes decisions and actions. Meeting memory answers from stored meetings."
         actions={
           <div className="flex flex-wrap gap-2">
             {!capturing ? (
@@ -892,6 +892,81 @@ export function BriefPage() {
               placeholder="Capture a Meet, upload a recording, paste a transcript, or try the sample demo."
             />
           </div>
+          <div className="border-t border-ink-100 pt-3">
+            <h3 className="text-sm font-semibold">Meeting memory</h3>
+            <p className="mt-1 text-[11px] text-ink-400">
+              Ask in plain language. Answers are retrieved from stored meetings, then written by
+              Summary — not a keyword dump
+              {search?.backend === "postgres"
+                ? " · saved in the database."
+                : search?.backend === "memory"
+                  ? " · this process has no database (clears on restart)."
+                  : "."}
+            </p>
+            <form
+              className="mt-2 flex gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void doSearch();
+              }}
+            >
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="What did we decide about launch?"
+                aria-label="Search meeting memory"
+              />
+              <Button type="submit" variant="secondary" disabled={busy}>
+                Search
+              </Button>
+            </form>
+            {search ? (
+              <div className="mt-3 space-y-2 text-sm">
+                {search.meetings.length === 0 ? (
+                  <p className="text-ink-400">Nothing stored yet. Run a demo or end a meeting first.</p>
+                ) : search.answer && !search.grounded ? (
+                  <p className="text-ink-400">{search.answer}</p>
+                ) : !search.answer && search.results.length === 0 ? (
+                  <p className="text-ink-400">
+                    No answer for “{search.query}” across {search.meetings.length} meeting
+                    {search.meetings.length === 1 ? "" : "s"}.
+                  </p>
+                ) : (
+                  <>
+                    {search.answer ? (
+                      <div className="rounded-lg border border-ink-100 bg-ink-50 px-3 py-2">
+                        <div className="text-[10px] uppercase tracking-wide text-ink-400">Answer</div>
+                        <p className="mt-1 font-medium text-ink-900">{search.answer}</p>
+                      </div>
+                    ) : null}
+                    {search.results.length > 0 ? (
+                      <ul className="space-y-2">
+                        {search.results.map((r, i) => (
+                          <li key={`${r.meetingId}-${i}`} className="rounded-lg border border-ink-100 px-3 py-2">
+                            <div className="flex items-baseline justify-between gap-2">
+                              <div className="text-[13px] text-ink-800">{r.answer}</div>
+                              {r.kind ? (
+                                <span className="shrink-0 text-[10px] uppercase tracking-wide text-ink-400">
+                                  {r.kind}
+                                </span>
+                              ) : null}
+                            </div>
+                            {r.evidence && r.evidence !== r.answer ? (
+                              <p className="mt-1 text-[12px] leading-snug text-ink-500">“{r.evidence}”</p>
+                            ) : null}
+                            <div className="mt-1 font-mono text-[10px] text-ink-400">
+                              {r.title || r.meetingId}
+                              {r.date ? ` · ${new Date(r.date).toLocaleString()}` : ""}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            ) : null}
+          </div>
           <button
             type="button"
             className="text-[11px] text-ink-500 underline-offset-2 hover:text-ink-800 hover:underline"
@@ -948,32 +1023,6 @@ export function BriefPage() {
                 <p className="mt-1 text-[11px] text-ink-400">
                   Live capture uses Hear sync. Uploads use Hear batch + diarize, then Summary.
                 </p>
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold">Meeting memory</h3>
-                <div className="mt-2 flex gap-2">
-                  <Input
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="What did we decide about pricing?"
-                  />
-                  <Button variant="secondary" onClick={() => void doSearch()}>
-                    Search
-                  </Button>
-                </div>
-                {search ? (
-                  <ul className="mt-3 space-y-2 text-sm">
-                    {search.results.length === 0 ? <li className="text-ink-400">No hits</li> : null}
-                    {search.results.map((r, i) => (
-                      <li key={i} className="rounded-lg border border-ink-100 px-3 py-2">
-                        <div className="font-medium">{r.answer}</div>
-                        <div className="font-mono text-[10px] text-ink-400">
-                          {r.meetingId} · {r.date}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
               </div>
               {result?.privacy ? (
                 <div className="rounded-lg border border-ink-100 bg-ink-50 px-3 py-2 font-mono text-[11px] text-ink-600">

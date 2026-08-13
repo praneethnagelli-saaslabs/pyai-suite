@@ -331,57 +331,5 @@ function safeParse(text: string): unknown {
   }
 }
 
-/** In-memory meeting memory for keyword + naive semantic search (spec #44). */
-export class MeetingMemory {
-  private meetings: Array<{
-    id: string;
-    date: string;
-    notes: MeetingNotes;
-    transcript: string;
-  }> = [];
-
-  add(id: string, notes: MeetingNotes, transcript: string, date = new Date().toISOString()): void {
-    this.meetings.push({ id, date, notes, transcript });
-  }
-
-  search(query: string): Array<{ meetingId: string; date: string; answer: string; evidence: string }> {
-    const q = query.toLowerCase();
-    const hits: Array<{ meetingId: string; date: string; answer: string; evidence: string; score: number }> = [];
-    for (const m of this.meetings) {
-      for (const d of m.notes.decisions) {
-        const hay = `${d.decision} ${d.evidence.excerpt ?? ""}`.toLowerCase();
-        if (hay.includes(q) || q.split(/\s+/).some((w) => hay.includes(w))) {
-          hits.push({
-            meetingId: m.id,
-            date: m.date,
-            answer: d.decision,
-            evidence: d.evidence.excerpt ?? d.decision,
-            score: hay.includes(q) ? 2 : 1,
-          });
-        }
-      }
-      for (const a of m.notes.actionItems) {
-        const hay = `${a.task} ${a.owner}`.toLowerCase();
-        if (hay.includes(q) || q.split(/\s+/).some((w) => hay.includes(w))) {
-          hits.push({
-            meetingId: m.id,
-            date: m.date,
-            answer: `${a.owner}: ${a.task}`,
-            evidence: a.evidence.excerpt ?? a.task,
-            score: 1,
-          });
-        }
-      }
-    }
-    return hits
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 10)
-      .map(({ meetingId, date, answer, evidence }) => ({ meetingId, date, answer, evidence }));
-  }
-
-  list() {
-    return this.meetings.map((m) => ({ id: m.id, date: m.date, title: m.notes.title, mode: m.notes.mode }));
-  }
-}
-
+export * from "./memory.js";
 export * from "./schema.js";

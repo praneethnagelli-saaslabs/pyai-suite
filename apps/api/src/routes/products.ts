@@ -585,7 +585,7 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
     });
     const out = await svc.platform.engine.execute(def);
     const art = getArtifact();
-    memory.add(out.runId, art.notes, art.transcript);
+    await memory.add(out.runId, art.notes, art.transcript);
 
     stages.push({
       id: "summary",
@@ -596,7 +596,7 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
     stages.push({
       id: "memory",
       label: "Store in meeting memory",
-      detail: out.runId,
+      detail: `${memory.backend} · ${out.runId}`,
     });
 
     if (out.status === "FAILED") {
@@ -665,7 +665,7 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
     const out = await svc.platform.engine.execute(def);
     const art = getArtifact();
     if (req.body.persist !== false) {
-      memory.add(out.runId, art.notes, art.transcript);
+      await memory.add(out.runId, art.notes, art.transcript);
     }
     const hearDetail = audio
       ? `${sttProvider} · diarized batch`
@@ -683,7 +683,7 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
       stages: [
         { id: "hear", label: "Hear (diarized STT)", detail: hearDetail },
         { id: "summary", label: "Summary (meeting notes)", detail: llmProvider },
-        { id: "memory", label: "Store in meeting memory", detail: out.runId },
+        { id: "memory", label: "Store in meeting memory", detail: `${memory.backend} · ${out.runId}` },
       ],
       ...art,
     };
@@ -695,8 +695,9 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
   }));
 
   app.get<{ Querystring: { q?: string } }>("/api/brief/search", async (req) => {
-    const q = req.query.q ?? "";
-    return { query: q, results: memory.search(q), meetings: memory.list() };
+    const raw = typeof req.query.q === "string" ? req.query.q : "";
+    const q = raw.trim().slice(0, 400);
+    return memory.search(q);
   });
 
   // ---- Simulator ----

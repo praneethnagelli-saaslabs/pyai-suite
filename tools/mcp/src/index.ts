@@ -17,7 +17,7 @@ export const TOOLS = [
   },
   {
     name: "search_meetings",
-    description: "Search Brief meeting memory",
+    description: "Search Brief meeting memory (embeddings + LLM answer over stored meetings)",
     inputSchema: { type: "object", properties: { q: { type: "string" } }, required: ["q"] },
   },
   {

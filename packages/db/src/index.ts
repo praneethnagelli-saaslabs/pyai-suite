@@ -2,9 +2,17 @@ import { MemoryRunStore } from "./memory.js";
 import { PostgresRunStore } from "./postgres.js";
 import type { RunStore } from "./types.js";
 
-export type { RunStore, StoredRun } from "./types.js";
+export type {
+  RunStore,
+  StoredRun,
+  MeetingStore,
+  MeetingListItem,
+  StoredMeeting,
+  StoredChunk,
+} from "./types.js";
 export { MemoryRunStore } from "./memory.js";
 export { PostgresRunStore } from "./postgres.js";
+export { MemoryMeetingStore, PostgresMeetingStore, createMeetingStore } from "./meetings.js";
 
 /**
  * Prefer Postgres when DATABASE_URL is reachable; otherwise in-memory.

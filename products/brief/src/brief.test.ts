@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createPlatform } from "@pyai/core";
+import { createPlatform, Capability } from "@pyai/core";
+import { MemoryMeetingStore } from "@pyai/db";
 import { buildBriefWorkflow, MeetingMemory } from "./workflow.js";
 
 const SAMPLE = [
@@ -8,6 +9,14 @@ const SAMPLE = [
   "Me: Action item — Them owns the security pack by Friday?",
   "Them: Yes. Any questions on pricing?",
 ].join("\n");
+
+function memoryFromPlatform() {
+  const platform = createPlatform({ includeMock: true });
+  const embed = platform.registry.getAdapterFor(Capability.EMBEDDINGS, "mock")?.asEmbeddings?.();
+  const llm = platform.registry.getAdapterFor(Capability.LLM, "mock")?.asLLM?.();
+  if (!embed || !llm) throw new Error("mock adapters missing");
+  return { platform, mem: new MeetingMemory(new MemoryMeetingStore(), embed, llm) };
+}
 
 describe("Brief", () => {
   it("extracts meeting notes on mock", async () => {
@@ -31,9 +40,8 @@ describe("Brief", () => {
     expect(art.privacy.storage).toBe("local");
   });
 
-  it("searches meeting memory", async () => {
-    const platform = createPlatform({ includeMock: true });
-    const mem = new MeetingMemory();
+  it("answers meeting memory from retrieved notes, not a keyword dump", async () => {
+    const { platform, mem } = memoryFromPlatform();
     const { def, getArtifact } = buildBriefWorkflow(platform, {
       transcriptText: SAMPLE,
       mode: "Planning",
@@ -41,9 +49,27 @@ describe("Brief", () => {
     });
     await platform.engine.execute(def);
     const art = getArtifact();
-    mem.add("m1", art.notes, SAMPLE, "2026-06-17");
-    const hits = mem.search("August");
-    expect(hits.length + mem.list().length).toBeGreaterThan(0);
-    expect(mem.list()[0]?.id).toBe("m1");
+    await mem.add("m1", art.notes, SAMPLE, "2026-06-17T00:00:00.000Z");
+
+    const byMonth = await mem.search("August");
+    expect(byMonth.answer).toMatch(/august|launch/i);
+    expect(byMonth.grounded).toBe(true);
+    expect(byMonth.results.length).toBeGreaterThan(0);
+    expect(byMonth.results.some((h) => h.kind === "decision" || h.kind === "transcript")).toBe(true);
+
+    const nl = await mem.search("What did we decide about launch?");
+    expect(nl.grounded).toBe(true);
+    expect(nl.answer).toMatch(/august|launch/i);
+    expect(nl.answer).not.toMatch(/^Them:/i);
+
+    const empty = await mem.search("");
+    expect(empty.results).toHaveLength(0);
+    expect(empty.answer).toBeNull();
+
+    const miss = await mem.search("xyzzy-no-such-topic");
+    expect(miss.grounded).toBe(false);
+    expect(miss.results).toHaveLength(0);
+
+    expect((await mem.list())[0]?.id).toBe("m1");
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createRunStore, MemoryRunStore } from "./index.js";
+import { createRunStore, MemoryMeetingStore, MemoryRunStore } from "./index.js";
 
 describe("RunStore", () => {
   it("memory upsert + list + get", async () => {
@@ -30,5 +30,48 @@ describe("RunStore", () => {
     const store = await createRunStore();
     expect(store.backend).toBe("memory");
     if (prev !== undefined) process.env.DATABASE_URL = prev;
+  });
+});
+
+describe("MeetingStore", () => {
+  it("persists meetings and replaces chunks", async () => {
+    const store = new MemoryMeetingStore();
+    await store.saveMeeting({
+      id: "m1",
+      date: "2026-06-17T00:00:00.000Z",
+      title: "Launch planning",
+      mode: "Planning",
+      notes: { title: "Launch planning" },
+      transcript: "Them: launch moves to August.",
+    });
+    await store.replaceChunks("m1", [
+      {
+        id: "m1:decision:0",
+        meetingId: "m1",
+        date: "2026-06-17T00:00:00.000Z",
+        title: "Launch planning",
+        kind: "decision",
+        text: "Move launch to August.",
+        evidence: "launch moves to August",
+        embedding: [0.1, 0.2],
+      },
+    ]);
+    await store.replaceChunks("m1", [
+      {
+        id: "m1:decision:0",
+        meetingId: "m1",
+        date: "2026-06-17T00:00:00.000Z",
+        title: "Launch planning",
+        kind: "decision",
+        text: "Move launch to August.",
+        evidence: "launch moves to August",
+        embedding: [0.3],
+      },
+    ]);
+    const listed = await store.listMeetings();
+    expect(listed[0]?.id).toBe("m1");
+    const chunks = await store.loadChunks();
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]?.embedding).toEqual([0.3]);
   });
 });

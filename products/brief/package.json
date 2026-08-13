@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@pyai/core": "workspace:*",
+    "@pyai/db": "workspace:*",
     "zod": "^3.23.8"
   },
   "devDependencies": {
