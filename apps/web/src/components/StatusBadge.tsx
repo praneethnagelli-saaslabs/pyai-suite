@@ -5,6 +5,8 @@ const STATUS_STYLES: Record<string, string> = {
   PARTIAL: "bg-amber-50 text-status-warn border-amber-200",
   FAILED: "bg-red-50 text-status-block border-red-200",
   RUNNING: "bg-sky-50 text-status-running border-sky-200",
+  RECORDING: "bg-sky-50 text-status-running border-sky-200",
+  ANALYZING: "bg-sky-50 text-status-running border-sky-200",
   QUEUED: "bg-ink-50 text-ink-600 border-ink-200",
   BUDGET_EXCEEDED: "bg-red-50 text-status-block border-red-200",
   TIMEOUT: "bg-red-50 text-status-block border-red-200",

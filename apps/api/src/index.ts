@@ -12,9 +12,28 @@ import { realtimeRoutes } from "./routes/realtime.js";
 import { sttRoutes } from "./routes/stt.js";
 import { calliqBotRoutes } from "./routes/calliqBot.js";
 import { googleMeetRoutes } from "./routes/googleMeet.js";
+import { Capability } from "@pyai/core";
+import { pickProvider } from "./providerPick.js";
+import { setMeetingBotHear } from "./meetingBot/index.js";
 
 export async function buildServer() {
   const svc = await createServices();
+  setMeetingBotHear(async (audio, format) => {
+    const id = pickProvider(svc.platform, Capability.BATCH_STT);
+    if (id === "mock") return undefined;
+    const adapter = svc.platform.registry.getAdapterFor(Capability.BATCH_STT, id);
+    const stt = adapter?.asSTT?.();
+    if (!stt) return undefined;
+    const res = await stt.transcribe({ audio, format, diarize: true });
+    const lines = (res.segments ?? [])
+      .map((s) => {
+        const text = s.text?.trim();
+        if (!text) return "";
+        return `${s.speaker?.trim() || "Speaker"}: ${text}`;
+      })
+      .filter(Boolean);
+    return (lines.length ? lines.join("\n") : res.text?.trim()) || undefined;
+  });
   const app = Fastify({ logger: false, bodyLimit: 25 * 1024 * 1024 });
 
   await app.register(cors, { origin: true, credentials: true });

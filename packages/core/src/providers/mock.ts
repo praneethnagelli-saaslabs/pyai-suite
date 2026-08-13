@@ -240,10 +240,75 @@ function mockBriefNotes(source: string): Record<string, unknown> {
   };
 }
 
+function extractLabeledTranscript(source: string): string {
+  const labeled = source.match(/Labeled transcript:\s*([\s\S]*?)(?:\n\nReturn ONLY valid JSON|$)/i);
+  if (labeled?.[1]?.trim()) return labeled[1].trim();
+  return source.trim();
+}
+
+function mockCallIQNotes(source: string): Record<string, unknown> {
+  const labeled = extractLabeledTranscript(source);
+  const parsed = labeled
+    .split(/\n+/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      const m = l.match(/^\[([^\]]+)\]\s*(.*)$/) ?? l.match(/^([^:]+):\s*(.*)$/);
+      return { speaker: m?.[1]?.trim() || "Unknown", text: (m?.[2] ?? l).trim() };
+    })
+    .filter((l) => l.text);
+  const speakers = Array.from(new Set(parsed.map((p) => p.speaker)));
+  const first = parsed[0]?.text ?? labeled.slice(0, 160);
+  const who = speakers.join(" and ") || "The caller";
+  const ev = (excerpt: string, speaker?: string) => ({
+    source: "transcript",
+    start: 0,
+    end: 0,
+    speaker: speaker ?? speakers[0] ?? "Unknown",
+    excerpt,
+  });
+  const oneSided = speakers.length <= 1;
+  return {
+    summary: `${who} said: ${first.slice(0, 180)}${oneSided ? " No other speaker appears in the transcript." : ""}`,
+    participants: speakers.length
+      ? speakers.map((name, i) => ({
+          name,
+          role: i === 0 ? "Sales Rep" : "Customer",
+          talkSeconds: 10,
+        }))
+      : [{ name: "Unknown", role: "Other", talkSeconds: 0 }],
+    dealStage: "Discovery",
+    dealHealthScore: oneSided ? 28 : 55,
+    dealHealthRationale: oneSided
+      ? "One-sided transcript; notes stay limited to what was spoken."
+      : "Notes stay limited to the recorded speakers and quotes.",
+    objections: [],
+    buyingSignals: [],
+    risks: oneSided
+      ? [
+          {
+            type: "weak_buying_signal",
+            detail: "Only one speaker was captured.",
+            severity: "high",
+            evidence: ev(first, speakers[0]),
+          },
+        ]
+      : [],
+    competitorMentions: [],
+    pricingObjections: [],
+    nextSteps: [],
+    followUpEmail: `Hi there, thanks for the time. Following up on: ${first.slice(0, 100)}`,
+    followUpSlack: `Follow-up: ${first.slice(0, 80)}`,
+    crmJson: { stage: "Discovery", owner: speakers[0] ?? null, next_step: null },
+  };
+}
+
 function buildMockJson(schema: Record<string, unknown>, source: string): Record<string, unknown> {
   const props = (schema.properties ?? {}) as Record<string, { type?: string; items?: { type?: string } }>;
   const isBrief = "decisions" in props && "actionItems" in props && "importantMoments" in props;
   if (isBrief) return mockBriefNotes(source);
+  const isCallIQ = "dealHealthScore" in props && "objections" in props && "followUpEmail" in props;
+  if (isCallIQ) return mockCallIQNotes(source);
   const out: Record<string, unknown> = {};
   const ev = (excerpt: string) => ({ source: "mock-call", start: 14.5, end: 33.0, speaker: "Customer", excerpt });
   for (const [k, v] of Object.entries(props)) {

@@ -594,13 +594,22 @@ export function CallIQPage() {
     }
   }
 
-  async function pollUntilTranscript(botId: string, maxMs = 120_000): Promise<string> {
-    const t0 = Date.now();
-    while (!pollAbort.current && Date.now() - t0 < maxMs) {
+  async function pollUntilTranscript(botId: string): Promise<string> {
+    const joinedAt = Date.now();
+    let leftAt: number | null = null;
+    let lastText = "";
+    let openedTranscript = false;
+    while (!pollAbort.current) {
       const st = await api.calliqBotStatus(botId);
       setBotNote(`${st.status}${st.detail ? ` · ${st.detail}` : ""}`);
       const hasLines = Boolean(st.transcriptText?.trim());
-      if (st.status === "waiting_transcript" || hasLines) {
+      const inMeeting = st.status === "joining" || st.status === "in_call";
+      const botLeft =
+        st.status === "waiting_transcript" || st.status === "done" || st.status === "failed";
+      if (inMeeting) leftAt = null;
+      else leftAt ??= Date.now();
+      if (botLeft) setLeavingBot(true);
+      if (st.status === "waiting_transcript" || st.status === "done" || hasLines) {
         setPipelineActive("hear");
         setPipelineDone(["bot"]);
       } else {
@@ -610,35 +619,64 @@ export function CallIQPage() {
       setStages((prev) =>
         prev.map((s) =>
           s.id === "bot"
-            ? { ...s, detail: st.detail ? `${st.status} · ${st.detail}` : st.status }
-            : s,
+            ? {
+                ...s,
+                label: botLeft ? "Bot left Meet" : "Bot in Meet",
+                detail: st.detail ? `${st.status} · ${st.detail}` : st.status,
+              }
+            : s.id === "hear" && !hasLines
+              ? {
+                  ...s,
+                  detail: inMeeting ? "listening for live captions…" : "finalizing transcript…",
+                }
+              : s,
         ),
       );
       if (hasLines) {
         const text = st.transcriptText!.trim();
+        lastText = text;
         setTranscript(text);
-        if (workingCallId) patchCall(workingCallId, { transcript: text, status: "recording" });
+        if (!openedTranscript) {
+          openedTranscript = true;
+          setDetailTab("transcript");
+        }
+        if (workingCallId) {
+          patchCall(workingCallId, {
+            transcript: text,
+            status: botLeft ? "analyzing" : "recording",
+          });
+        }
         setStages((prev) =>
           prev.map((s) =>
             s.id === "hear"
               ? {
                   ...s,
                   detail:
-                    st.status === "done"
+                    st.status === "done" || st.status === "waiting_transcript"
                       ? `${text.split("\n").length} lines`
                       : `live · ${text.split("\n").length} lines`,
                 }
               : s,
           ),
         );
+      } else if (botLeft && workingCallId) {
+        patchCall(workingCallId, { status: "analyzing" });
       }
       if (st.status === "failed") throw new Error(st.error || st.detail || "Bot failed");
       if (st.status === "done" && st.transcriptText?.trim()) return st.transcriptText.trim();
-      await sleep(1500);
+      if (inMeeting && Date.now() - joinedAt > 3 * 60 * 60 * 1000) {
+        throw new Error("Bot was in the Meet too long. Click Finish & analyze.");
+      }
+      if (leftAt && Date.now() - leftAt > 180_000) {
+        if (lastText) return lastText;
+        throw new Error(
+          "Timed out waiting for the transcript after the bot left. Stay on the call a bit longer next time, or upload the recording.",
+        );
+      }
+      await sleep(800);
     }
-    throw new Error(
-      "Timed out waiting for the bot to leave. End the Meet, or click Finish & analyze.",
-    );
+    if (lastText) return lastText;
+    throw new Error("Bot session cancelled.");
   }
 
   async function runLiveBotSession(botId: string, meetingUrl: string, draftId?: string) {
@@ -656,7 +694,7 @@ export function CallIQPage() {
       prev.map((s) => (s.id === "bot" ? { ...s, label: "Bot in Meet", detail: "waiting for call to end" } : s)),
     );
 
-    const text = await pollUntilTranscript(botId, 180_000);
+    const text = await pollUntilTranscript(botId);
     setTranscript(text);
     setPipelineActive("recap");
     setPipelineDone(["bot", "hear"]);
@@ -691,12 +729,12 @@ export function CallIQPage() {
     });
     setBotBusy(true);
     setError(null);
-    setDetailTab("activity");
+    setDetailTab("transcript");
     setPipelineActive("bot");
     setPipelineDone([]);
     setStages([
       { id: "bot", label: "Bot joining Meet…", detail: "Attendee" },
-      { id: "hear", label: "Hear — capturing conversation…", detail: "waiting" },
+      { id: "hear", label: "Hear — live captions…", detail: "waiting for speech" },
       { id: "recap", label: "Recap — deal notes…", detail: "waiting" },
     ]);
     try {
@@ -730,6 +768,12 @@ export function CallIQPage() {
   async function finishBotNow() {
     if (!botSessionId || leavingBot) return;
     setLeavingBot(true);
+    if (workingCallId) patchCall(workingCallId, { status: "analyzing" });
+    setStages((prev) =>
+      prev.map((s) =>
+        s.id === "bot" ? { ...s, label: "Bot leaving Meet", detail: "stop recording" } : s,
+      ),
+    );
     try {
       const st = await api.calliqBotLeave(botSessionId);
       setBotNote(`Leave requested · ${st.detail ?? st.status}`);
@@ -916,7 +960,7 @@ export function CallIQPage() {
                 disabled={busy || botBusy || !meetUrl.trim()}
                 onClick={() => void joinBot()}
               >
-                {botBusy ? "Bot in call…" : "Send CallIQ Bot"}
+                {botBusy ? (leavingBot ? "Finalizing…" : "Bot in call…") : "Send CallIQ Bot"}
               </Button>
               <Button
                 type="button"
@@ -956,8 +1000,8 @@ export function CallIQPage() {
             ) : null}
             {botNote ? <p className="text-xs text-ink-500">{botNote}</p> : null}
             <p className="text-[11px] text-ink-400">
-              Admit <span className="font-medium text-ink-600">CallIQ Bot</span> from the waiting room. After you
-              leave, it auto-leaves in ~20s — or use Finish & analyze.
+              Admit <span className="font-medium text-ink-600">CallIQ Bot</span> from the waiting room. Captions
+              stream live on the Transcript tab. After the bot leaves, Recap runs — or use Finish & analyze.
             </p>
           </div>
 
@@ -1119,9 +1163,8 @@ export function CallIQPage() {
                       {sourceLabel(selected.source)}
                     </span>
                     {selected.status === "ready" ? <StatusBadge status="SUCCEEDED" /> : null}
-                    {selected.status === "analyzing" || selected.status === "recording" ? (
-                      <StatusBadge status="RUNNING" />
-                    ) : null}
+                    {selected.status === "recording" ? <StatusBadge status="RECORDING" /> : null}
+                    {selected.status === "analyzing" ? <StatusBadge status="ANALYZING" /> : null}
                     {selected.status === "failed" ? <StatusBadge status="FAILED" /> : null}
                   </div>
                   <p className="mt-1 text-xs text-ink-400">
@@ -1292,7 +1335,11 @@ export function CallIQPage() {
                       setTranscript(e.target.value);
                       patchCall(selected.id, { transcript: e.target.value, status: selected.analysis ? selected.status : "draft" });
                     }}
-                    placeholder="Transcript from Meet, upload, or demo…"
+                    placeholder={
+                      botBusy
+                        ? "Live captions appear here as people speak. Turn on captions in Meet if nothing shows after a few seconds."
+                        : "Transcript from Meet, upload, or demo…"
+                    }
                     className="min-h-[360px] font-mono text-[13px] leading-relaxed"
                     disabled={busy || botBusy}
                   />

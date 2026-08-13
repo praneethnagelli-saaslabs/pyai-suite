@@ -20,6 +20,7 @@ import {
   recapFromSegments,
   type RecapMetrics,
 } from "./recap.js";
+import { localDealNotes } from "./localNotes.js";
 
 export interface CallIQInput {
   audio?: Uint8Array;
@@ -118,7 +119,12 @@ export function buildCallIQWorkflow(
           recap = recapFromSegments(transcriptSegments);
           const llm = platform.registry.getAdapterFor(Capability.STRUCTURED_OUTPUT, input.llmProvider);
           const llmFn = llm?.asLLM;
-          if (!llmFn) throw new Error(`no LLM provider available (requested ${input.llmProvider ?? "default"})`);
+          // PyAI is Hear-only. Mock LLM used to emit canned Dana/pricing notes
+          // ("Mock summary of the call. You are Recap…") instead of the transcript.
+          if (!llmFn || llm.id === "mock") {
+            const data = localDealNotes(transcriptSegments, recap, transcript);
+            return { data, recap, claims: toClaims(data), usage: { ...ZERO_USAGE } };
+          }
           const sys = getPrompt(input.promptVersion ?? PROMPT_VERSION);
           const user = [
             "You are Recap for a sales call. Use the Hear transcript and metrics.",
@@ -157,8 +163,13 @@ export function buildCallIQWorkflow(
         run: async (ctx) => {
           const verifier = platform.registry.getAdapterFor(Capability.REASONING_LLM, input.verifyProvider);
           const verifyFn = verifier?.asLLM;
-          if (!verifyFn) {
-            return { passed: true, checkedClaims: 0, reason: "no verifier configured; skipped adaptive verification", usage: { ...ZERO_USAGE } };
+          if (!verifyFn || verifier.id === "mock") {
+            return {
+              passed: true,
+              checkedClaims: 0,
+              reason: "no live verifier configured; skipped adaptive verification",
+              usage: { ...ZERO_USAGE },
+            };
           }
           const claims = toClaims(analysis ?? (ctx.artifacts.recap as { data: CallAnalysis })?.data);
           const res = await verifyFn().complete({

@@ -28,10 +28,27 @@ describe("CallIQ analysis workflow", () => {
     expect(out.gates.some((g) => g.gateId === "evidence" && g.verdict === "PASS")).toBe(true);
     expect(art.recap.talkRatio.length).toBeGreaterThan(0);
     expect(art.recap.keywords.some((k) => k.term === "implementation" || k.term === "security")).toBe(true);
-    // Run is traceable.
+    expect(art.analysis.summary.toLowerCase()).toMatch(/implementation|security|dana|enterprise/);
+    expect(art.analysis.summary).not.toMatch(/Mock summary/i);
     const run = platform.tracer.getRun(out.runId);
     expect(run?.status).toBe("SUCCEEDED");
-    expect(run?.providerCalls).toBeGreaterThan(0);
+  });
+
+  it("does not invent Dana/pricing notes for an unrelated transcript", async () => {
+    const transcript = [
+      "Nagelli Praneeth: I am willing to sell you just call products.",
+      "Nagelli Praneeth: Are you interested in it?",
+      "Nagelli Praneeth: Okay, thanks.",
+    ].join("\n");
+    const { def, getArtifact } = buildCallIQWorkflow(platform, { transcriptText: transcript, llmProvider: "mock" });
+    const out = await platform.engine.execute(def);
+    expect(out.status).toBe("SUCCEEDED");
+    const art = getArtifact();
+    expect(art.analysis.summary.toLowerCase()).toMatch(/just call|interested/);
+    expect(art.analysis.summary).not.toMatch(/Dana|security pack|Mock summary/i);
+    expect(art.analysis.followUpEmail).not.toMatch(/Dana/i);
+    expect(art.analysis.objections).toHaveLength(0);
+    expect(art.analysis.participants.some((p) => /nagelli/i.test(p.name))).toBe(true);
   });
 
   it("normalizes sparse LLM objections into typed details + summary", async () => {

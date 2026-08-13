@@ -26,7 +26,18 @@ export type BotSession = {
   createdAt: number;
   updatedAt: number;
   detail?: string;
+  /** Set once we ask Attendee to leave, or observe the bot leave Meet. */
+  leaveRequested?: boolean;
+  hearAttempted?: boolean;
 };
+
+type HearRecordingFn = (audio: Uint8Array, format: string) => Promise<string | undefined>;
+let hearRecordingFn: HearRecordingFn | undefined;
+
+/** Wire PyAI Hear (or another STT) so empty Attendee captions can fall back to the recording. */
+export function setMeetingBotHear(fn: HearRecordingFn): void {
+  hearRecordingFn = fn;
+}
 
 export type JoinBotInput = {
   meetingUrl: string;
@@ -177,27 +188,41 @@ function summarizeHttpError(status: number, text: string): string {
   return `${status}: ${trimmed.slice(0, 180).replace(/\s+/g, " ")}`;
 }
 
+export function attendeeCreatePayload(meetingUrl: string, botName: string): Record<string, unknown> {
+  const aloneAfter = Number(env("ATTENDEE_ALONE_TIMEOUT_SECONDS") || "20");
+  const captionLang = env("ATTENDEE_CAPTION_LANGUAGE") || "en-US";
+  return {
+    meeting_url: meetingUrl,
+    bot_name: botName,
+    // Live captions from Meet/Zoom/Teams (no extra STT key). Poll /transcript during the call.
+    transcription_settings: {
+      meeting_closed_captions: {
+        google_meet_language: captionLang,
+        zoom_language: "English",
+        teams_language: "en-us",
+        merge_consecutive_captions: true,
+      },
+    },
+    recording_settings: { format: "mp3" },
+    automatic_leave_settings: {
+      only_participant_in_meeting_timeout_seconds: Number.isFinite(aloneAfter) ? aloneAfter : 20,
+      waiting_room_timeout_seconds: 180,
+      silence_timeout_seconds: 300,
+      silence_activate_after_seconds: 120,
+    },
+  };
+}
+
 async function attendeeCreate(meetingUrl: string, botName: string): Promise<{ id: string; raw: unknown }> {
   const key = env("ATTENDEE_API_KEY");
   if (!key) throw new Error("ATTENDEE_API_KEY not set");
-  const aloneAfter = Number(env("ATTENDEE_ALONE_TIMEOUT_SECONDS") || "20");
   const r = await fetch(`${attendeeBase()}/api/v1/bots`, {
     method: "POST",
     headers: {
       Authorization: `Token ${key}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      meeting_url: meetingUrl,
-      bot_name: botName,
-      // Defaults are 60s alone / 600s silence — shorten so demos finalize promptly
-      automatic_leave_settings: {
-        only_participant_in_meeting_timeout_seconds: Number.isFinite(aloneAfter) ? aloneAfter : 20,
-        waiting_room_timeout_seconds: 180,
-        silence_timeout_seconds: 300,
-        silence_activate_after_seconds: 120,
-      },
-    }),
+    body: JSON.stringify(attendeeCreatePayload(meetingUrl, botName)),
   });
   const text = await r.text();
   if (!r.ok) throw new Error(`attendee create ${summarizeHttpError(r.status, text)}`);
@@ -221,11 +246,148 @@ async function attendeeLeave(botId: string): Promise<void> {
   throw new Error(`attendee leave ${summarizeHttpError(r.status, text)}`);
 }
 
+export function normalizeAttendeeState(raw: string): string {
+  return raw.toLowerCase().replace(/[\s-]+/g, "_").trim();
+}
+
+function eventBlob(event: Record<string, unknown>): string {
+  return [event.type, event.sub_type, event.event_type, event.code, event.new_state]
+    .filter(Boolean)
+    .map(String)
+    .join(" ")
+    .toLowerCase();
+}
+
+export function eventsIndicateBotLeft(events: Array<Record<string, unknown>>): boolean {
+  return events.some((event) =>
+    /left_meeting|bot_left|meeting_ended|call_ended/.test(eventBlob(event)),
+  );
+}
+
+const ATTENDEE_LEFT_STATES = new Set([
+  "leaving",
+  "post_processing",
+  "ended",
+  "data_deleted",
+  "disconnecting",
+]);
+
+const ATTENDEE_IN_CALL_STATES = new Set([
+  "joined_recording",
+  "joined_not_recording",
+  "joined_recording_paused",
+  "joined_recording_permission_denied",
+  "connected",
+  "joining_breakout_room",
+  "leaving_breakout_room",
+]);
+
+export function mapAttendeeBotStatus(input: {
+  state: string;
+  transcriptionState?: string;
+  recordingState?: string;
+  events?: Array<Record<string, unknown>>;
+  transcriptText?: string;
+}): {
+  status: BotSessionStatus;
+  transcriptText?: string;
+  detail?: string;
+  error?: string;
+  leftMeet: boolean;
+} {
+  const state = normalizeAttendeeState(input.state);
+  const transcriptionState = normalizeAttendeeState(input.transcriptionState ?? "");
+  const events = input.events ?? [];
+  const lastEvent = events.length ? events[events.length - 1] : undefined;
+  const lastEventLabel = lastEvent
+    ? [lastEvent.type, lastEvent.sub_type].filter(Boolean).map(String).join(":")
+    : undefined;
+  const transcriptText = input.transcriptText?.trim() || undefined;
+  const lineNote = transcriptText ? ` · ${transcriptText.split("\n").length} lines` : "";
+  const label = lastEventLabel || state || "unknown";
+
+  if (state === "fatal_error" || state.includes("fatal")) {
+    return { status: "failed", error: label, detail: label, leftMeet: true };
+  }
+
+  const leftMeet = ATTENDEE_LEFT_STATES.has(state) || eventsIndicateBotLeft(events);
+
+  if (leftMeet) {
+    if (transcriptText) {
+      return {
+        status: "done",
+        transcriptText,
+        detail: `Bot left Meet · ${label}${lineNote}`,
+        leftMeet: true,
+      };
+    }
+    return {
+      status: "waiting_transcript",
+      detail: `Bot left Meet · finalizing transcript${transcriptionState ? ` (${transcriptionState})` : ""}`,
+      leftMeet: true,
+    };
+  }
+
+  if (state.startsWith("joined") || ATTENDEE_IN_CALL_STATES.has(state)) {
+    return {
+      status: "in_call",
+      transcriptText,
+      detail: transcriptText ? `${label}${lineNote}` : label,
+      leftMeet: false,
+    };
+  }
+
+  return {
+    status: "joining",
+    transcriptText,
+    detail: label || "joining",
+    leftMeet: false,
+  };
+}
+
+async function attendeeRecordingAudio(botId: string): Promise<{ audio: Uint8Array; format: string } | undefined> {
+  const key = env("ATTENDEE_API_KEY");
+  if (!key) return undefined;
+  const r = await fetch(`${attendeeBase()}/api/v1/bots/${botId}/recording`, {
+    headers: { Authorization: `Token ${key}` },
+  });
+  if (!r.ok) return undefined;
+  const raw = (await r.json()) as { url?: string };
+  const url = typeof raw.url === "string" ? rewriteRecordingUrl(raw.url) : "";
+  if (!url) return undefined;
+  const file = await fetch(url);
+  if (!file.ok) return undefined;
+  const buf = new Uint8Array(await file.arrayBuffer());
+  if (buf.byteLength < 256 || buf.byteLength > 18_000_000) return undefined;
+  const format = url.toLowerCase().includes(".mp3") ? "mp3" : url.toLowerCase().includes(".wav") ? "wav" : "m4a";
+  return { audio: buf, format };
+}
+
+function rewriteRecordingUrl(url: string): string {
+  const endpoint = env("AWS_ENDPOINT_URL") || env("MINIO_ENDPOINT");
+  if (!endpoint) return url;
+  try {
+    const u = new URL(url);
+    if (u.hostname === "localhost" || u.hostname === "127.0.0.1" || u.hostname === "minio") {
+      const raw = endpoint.replace(/^https?:\/\//, "");
+      const [host, port] = raw.split(":");
+      if (host) u.hostname = host;
+      if (port) u.port = port;
+      u.protocol = endpoint.startsWith("https") ? "https:" : "http:";
+    }
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
 async function attendeeGet(botId: string): Promise<{
   status: BotSessionStatus;
   transcriptText?: string;
   detail?: string;
   error?: string;
+  leftMeet: boolean;
+  recordingReady?: boolean;
 }> {
   const key = env("ATTENDEE_API_KEY");
   if (!key) throw new Error("ATTENDEE_API_KEY not set");
@@ -235,13 +397,6 @@ async function attendeeGet(botId: string): Promise<{
   const text = await r.text();
   if (!r.ok) throw new Error(`attendee get ${r.status}: ${text.slice(0, 240)}`);
   const raw = JSON.parse(text) as Record<string, unknown>;
-  const state = String(raw.state ?? "").toLowerCase();
-  const transcriptionState = String(raw.transcription_state ?? "").toLowerCase();
-  const events = Array.isArray(raw.events) ? (raw.events as Array<Record<string, unknown>>) : [];
-  const lastEvent = events.length ? events[events.length - 1] : undefined;
-  const lastEventLabel = lastEvent
-    ? [lastEvent.type, lastEvent.sub_type].filter(Boolean).map(String).join(":")
-    : undefined;
 
   let transcriptText: string | undefined;
   try {
@@ -255,57 +410,31 @@ async function attendeeGet(botId: string): Promise<{
     /* ignore */
   }
 
-  if (state === "fatal_error" || state.includes("fatal")) {
-    const err = lastEventLabel || state;
-    return { status: "failed", error: err, detail: err };
-  }
-
-  // Only terminal Attendee states finalize the CallIQ pipeline
-  const meetingOver = state === "ended" || state === "data_deleted";
-
-  if (!meetingOver) {
-    const inCall =
-      state.startsWith("joined") ||
-      state === "leaving" ||
-      state === "post_processing" ||
-      state === "connected" ||
-      state === "disconnecting";
-    if (inCall) {
-      return {
-        status: state === "leaving" || state === "post_processing" ? "waiting_transcript" : "in_call",
-        transcriptText,
-        detail: transcriptText?.trim()
-          ? `${lastEventLabel || state} · ${transcriptText.trim().split("\n").length} lines so far`
-          : lastEventLabel || state,
-      };
-    }
-    return {
-      status: "joining",
-      transcriptText,
-      detail: lastEventLabel || state || "joining",
-    };
-  }
-
-  if (transcriptText?.trim()) {
-    return { status: "done", transcriptText, detail: `attendee · ${state}` };
-  }
-
+  const recordingState = normalizeAttendeeState(String(raw.recording_state ?? ""));
   return {
-    status: "failed",
-    error:
-      "Bot finished without a usable transcript. Stay in the Meet and speak; after you leave, the bot auto-leaves in ~20s (or click Finish & analyze).",
-    detail: `${state}/${transcriptionState}${lastEventLabel ? ` · ${lastEventLabel}` : ""}`,
+    ...mapAttendeeBotStatus({
+      state: String(raw.state ?? ""),
+      transcriptionState: String(raw.transcription_state ?? ""),
+      recordingState,
+      events: Array.isArray(raw.events) ? (raw.events as Array<Record<string, unknown>>) : [],
+      transcriptText,
+    }),
+    recordingReady: recordingState === "complete" || recordingState === "completed",
   };
 }
 
 function utteranceText(o: Record<string, unknown>): string {
   if (typeof o.text === "string" && o.text.trim()) return o.text.trim();
   if (typeof o.content === "string" && o.content.trim()) return o.content.trim();
+  if (typeof o.caption === "string" && o.caption.trim()) return o.caption.trim();
   if (typeof o.transcription === "string" && o.transcription.trim()) return o.transcription.trim();
-  // Attendee: { transcription: { transcript: "..." } }
+  // Attendee: { transcription: { transcript: "..." } } or a plain string
   if (o.transcription && typeof o.transcription === "object") {
-    const t = (o.transcription as Record<string, unknown>).transcript;
-    if (typeof t === "string" && t.trim()) return t.trim();
+    const nested = o.transcription as Record<string, unknown>;
+    for (const key of ["transcript", "text", "content", "caption"]) {
+      const t = nested[key];
+      if (typeof t === "string" && t.trim()) return t.trim();
+    }
   }
   const words = o.words as Array<{ text?: string; word?: string }> | undefined;
   if (Array.isArray(words)) {
@@ -523,18 +652,72 @@ export async function joinMeetingBot(input: JoinBotInput): Promise<BotSession> {
 export async function leaveMeetingBot(id: string): Promise<BotSession | null> {
   const session = sessions.get(id);
   if (!session) return null;
+  session.leaveRequested = true;
   if (session.provider === "attendee" && session.externalId) {
     try {
       await attendeeLeave(session.externalId);
       session.detail = "Leave requested — waiting for Attendee to finalize transcript";
-      session.status = "waiting_transcript";
+      session.status = session.transcriptText?.trim() ? "done" : "waiting_transcript";
       session.updatedAt = Date.now();
     } catch (e) {
       session.detail = e instanceof Error ? e.message.slice(0, 160) : "leave failed";
       session.updatedAt = Date.now();
     }
+  } else if (session.transcriptText?.trim()) {
+    session.status = "done";
+    session.detail = "Leave requested · transcript ready";
+    session.updatedAt = Date.now();
+  } else {
+    session.status = "waiting_transcript";
+    session.detail = "Leave requested — finalizing transcript";
+    session.updatedAt = Date.now();
   }
   return getMeetingBot(id);
+}
+
+function applyLiveBotStatus(
+  session: BotSession,
+  live: {
+    status: BotSessionStatus;
+    transcriptText?: string;
+    detail?: string;
+    error?: string;
+    leftMeet?: boolean;
+  },
+): void {
+  session.transcriptText = live.transcriptText ?? session.transcriptText;
+  session.error = live.error;
+  session.updatedAt = Date.now();
+  if (live.leftMeet) session.leaveRequested = true;
+
+  const stickyLeave =
+    session.leaveRequested ||
+    session.status === "waiting_transcript" ||
+    session.status === "done" ||
+    live.leftMeet === true;
+
+  if (live.status === "failed") {
+    session.status = "failed";
+    session.detail = live.detail;
+    return;
+  }
+
+  if (live.status === "done") {
+    session.status = "done";
+    session.detail = live.detail;
+    return;
+  }
+
+  if (stickyLeave && (live.status === "in_call" || live.status === "joining")) {
+    session.status = session.transcriptText?.trim() ? "done" : "waiting_transcript";
+    session.detail = live.detail
+      ? `${live.detail} · finalizing after leave`
+      : "Bot left Meet · finalizing transcript";
+    return;
+  }
+
+  session.status = live.status;
+  session.detail = live.detail;
 }
 
 export async function getMeetingBot(id: string): Promise<BotSession | null> {
@@ -549,11 +732,29 @@ export async function getMeetingBot(id: string): Promise<BotSession | null> {
       session.provider === "recall"
         ? await recallGet(session.externalId)
         : await attendeeGet(session.externalId);
-    session.status = live.status;
-    session.transcriptText = live.transcriptText ?? session.transcriptText;
-    session.error = live.error;
-    session.detail = live.detail;
-    session.updatedAt = Date.now();
+    applyLiveBotStatus(session, live);
+    const leftMeet = "leftMeet" in live && Boolean(live.leftMeet);
+    const recordingReady = "recordingReady" in live && Boolean(live.recordingReady);
+    if (
+      session.provider === "attendee" &&
+      !session.transcriptText?.trim() &&
+      leftMeet &&
+      recordingReady &&
+      !session.hearAttempted &&
+      hearRecordingFn
+    ) {
+      session.hearAttempted = true;
+      session.detail = "Bot left Meet · Hear transcribing recording…";
+      const rec = await attendeeRecordingAudio(session.externalId);
+      if (rec) {
+        const heard = await hearRecordingFn(rec.audio, rec.format);
+        if (heard?.trim()) {
+          session.transcriptText = heard.trim();
+          session.status = "done";
+          session.detail = "Hear from meeting recording";
+        }
+      }
+    }
   } catch (e) {
     session.detail = e instanceof Error ? e.message.slice(0, 160) : "poll failed";
     session.updatedAt = Date.now();
