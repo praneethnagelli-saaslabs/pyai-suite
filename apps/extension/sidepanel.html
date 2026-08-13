@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>CallIQ</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #0f172a;
+      }
+      .bar {
+        font: 600 12px/1.3 system-ui, sans-serif;
+        padding: 8px 10px;
+        color: #e2e8f0;
+      }
+      .bar span {
+        font-weight: 400;
+        color: #94a3b8;
+      }
+      iframe {
+        display: block;
+        width: 100%;
+        height: calc(100% - 34px);
+        border: 0;
+        background: #fff;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="bar">CallIQ <span>· stay in Meet · transcript here</span></div>
+    <iframe id="app" title="CallIQ" src="http://localhost:3000/calliq"></iframe>
+    <script src="sidepanel.js"></script>
+  </body>
+</html>

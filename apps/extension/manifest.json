@@ -1,9 +1,12 @@
 {
   "manifest_version": 3,
   "name": "PyAI Suite",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "CallIQ bot join, Brief Meet capture, Scrib dictation. Secrets never touch content scripts.",
-  "permissions": ["activeTab", "storage", "scripting", "tabs"],
+  "permissions": ["activeTab", "storage", "scripting", "tabs", "sidePanel"],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
   "host_permissions": [
     "http://localhost:4000/*",
     "http://127.0.0.1:4000/*",

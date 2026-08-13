@@ -168,6 +168,22 @@ export const api = {
       externalId?: string;
       updatedAt: number;
     }>(`/api/calliq/bot/${encodeURIComponent(id)}`),
+  calliqBotCurrent: async () => {
+    const res = await fetch(`${API_BASE}/api/calliq/bot/current`, { credentials: "include" });
+    if (res.status === 204 || res.status === 404) return null;
+    if (!res.ok) return null;
+    return (await res.json()) as {
+      id: string;
+      provider: string;
+      status: string;
+      meetingUrl: string;
+      botName: string;
+      detail?: string;
+      error?: string;
+      transcriptText?: string;
+      updatedAt: number;
+    };
+  },
   calliqBotLeave: (id: string) =>
     request<{
       id: string;

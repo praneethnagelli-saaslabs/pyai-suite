@@ -25,11 +25,17 @@ import {
   type CallAnalysis,
   type CalliqCall,
   type CallSource,
+  CALLIQ_CALLS_KEY,
+  CALLIQ_LIVE_KEY,
+  CALLIQ_SELECTED_KEY,
   deleteCall,
+  findLiveCall,
   loadCalls,
+  loadLiveBot,
   loadSelectedCallId,
   newCallId,
   saveCalls,
+  saveLiveBot,
   saveSelectedCallId,
   sourceLabel,
   titleFromTranscript,
@@ -57,12 +63,21 @@ export function CallIQPage() {
   const [showSettings, setShowSettings] = useState(false);
   const [showManualLink, setShowManualLink] = useState(false);
   const [showOtherWays, setShowOtherWays] = useState(false);
-  const [detailTab, setDetailTab] = useState<DetailTab>("notes");
+  const [detailTab, setDetailTab] = useState<DetailTab>(() => {
+    const id = loadSelectedCallId();
+    const call = id ? loadCalls().find((c) => c.id === id) : undefined;
+    if (call?.status === "recording" || (call?.transcript && !call.analysis)) return "transcript";
+    return "notes";
+  });
   const [clipboardUrl, setClipboardUrl] = useState<string | null>(null);
   const [extensionOk, setExtensionOk] = useState<boolean | null>(null);
   const [awaitingFollowMe, setAwaitingFollowMe] = useState(false);
 
-  const [transcript, setTranscript] = useState("");
+  const [transcript, setTranscript] = useState(() => {
+    const id = loadSelectedCallId();
+    if (!id) return "";
+    return loadCalls().find((c) => c.id === id)?.transcript ?? "";
+  });
   const [meetUrl, setMeetUrl] = useState("");
   const [llmProvider, setLlmProvider] = useState("mock");
   const [sttProvider, setSttProvider] = useState("mock");
@@ -85,6 +100,7 @@ export function CallIQPage() {
 
   const pollAbort = useRef(false);
   const joinInFlight = useRef(false);
+  const resumeStarted = useRef(false);
   const audioCtx = useRef<AudioContext | null>(null);
   const demoAudio = useRef<HTMLAudioElement | null>(null);
   const demoObjectUrl = useRef<string | null>(null);
@@ -231,9 +247,19 @@ export function CallIQPage() {
   useEffect(() => {
     void pingExtension().then(setExtensionOk);
     const onMsg = (event: MessageEvent) => {
-      if (event.source !== window) return;
-      if (event.data?.type === "calliq.extension.ready") setExtensionOk(true);
-      if (event.data?.type === "calliq.startWithBot.result") {
+      const fromSelf = event.source === window;
+      const fromParent = window.parent !== window && event.source === window.parent;
+      if (!fromSelf && !fromParent) return;
+      if (fromSelf && event.data?.type === "calliq.extension.ready") setExtensionOk(true);
+      if (event.data?.type === "calliq.handoff.join") {
+        const url = extractMeetingUrl(String(event.data.meetingUrl || ""));
+        if (!url || !isUsableMeetingUrl(url)) return;
+        setAwaitingFollowMe(false);
+        setShowJoin(true);
+        void joinBot(url);
+        return;
+      }
+      if (fromSelf && event.data?.type === "calliq.startWithBot.result") {
         if (!event.data.ok) {
           setAwaitingFollowMe(false);
           setError(event.data.reason || "Could not start Meet with bot");
@@ -371,12 +397,75 @@ export function CallIQPage() {
   }, [params]);
 
   useEffect(() => {
+    if (resumeStarted.current) return;
+    resumeStarted.current = true;
+    void (async () => {
+      let live = loadLiveBot();
+      if (!live) {
+        try {
+          const cur = await api.calliqBotCurrent();
+          if (!cur?.id) return;
+          const liveStatuses = new Set(["joining", "in_call", "waiting_transcript"]);
+          const calls = loadCalls();
+          const match =
+            findLiveCall(calls, cur.meetingUrl) ??
+            calls.find((c) => c.meetingUrl === cur.meetingUrl) ??
+            createDraft("meet", {
+              status: liveStatuses.has(cur.status) ? "recording" : cur.transcriptText ? "ready" : "draft",
+              meetingUrl: cur.meetingUrl,
+              transcript: cur.transcriptText?.trim() ?? "",
+              title: `${meetingHostLabel(cur.meetingUrl)} call`,
+            });
+          if (cur.transcriptText?.trim() && match.id) {
+            patchCall(match.id, { transcript: cur.transcriptText.trim() });
+            setTranscript(cur.transcriptText.trim());
+            selectCall(match.id);
+            setDetailTab("transcript");
+          }
+          if (!liveStatuses.has(cur.status)) return;
+          live = {
+            botId: cur.id,
+            callId: match.id,
+            meetingUrl: cur.meetingUrl,
+            startedAt: Date.now(),
+          };
+          saveLiveBot(live);
+        } catch {
+          return;
+        }
+      }
+      if (live && !joinInFlight.current) await resumeLiveBot(live);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const syncFromStorage = () => {
+      const next = loadCalls();
+      setCalls(next);
+      const id = loadSelectedCallId();
+      if (!id) return;
+      const call = next.find((c) => c.id === id);
+      if (!call) return;
+      setSelectedId(id);
+      if (call.transcript) setTranscript(call.transcript);
+      if (call.analysis) setDetailTab("notes");
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (!event.key || event.key === CALLIQ_CALLS_KEY || event.key === CALLIQ_SELECTED_KEY || event.key === CALLIQ_LIVE_KEY) {
+        syncFromStorage();
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  useEffect(() => {
     if ("speechSynthesis" in window) {
       window.speechSynthesis.getVoices();
       window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
     }
     return () => {
-      pollAbort.current = true;
       stopDemoSpeech();
     };
   }, []);
@@ -595,7 +684,7 @@ export function CallIQPage() {
     }
   }
 
-  async function pollUntilTranscript(botId: string): Promise<string> {
+  async function pollUntilTranscript(botId: string, callId: string): Promise<string> {
     const joinedAt = Date.now();
     let leftAt: number | null = null;
     let lastText = "";
@@ -641,12 +730,10 @@ export function CallIQPage() {
           openedTranscript = true;
           setDetailTab("transcript");
         }
-        if (workingCallId) {
-          patchCall(workingCallId, {
-            transcript: text,
-            status: botLeft ? "analyzing" : "recording",
-          });
-        }
+        patchCall(callId, {
+          transcript: text,
+          status: botLeft ? "analyzing" : "recording",
+        });
         setStages((prev) =>
           prev.map((s) =>
             s.id === "hear"
@@ -660,8 +747,8 @@ export function CallIQPage() {
               : s,
           ),
         );
-      } else if (botLeft && workingCallId) {
-        patchCall(workingCallId, { status: "analyzing" });
+      } else if (botLeft) {
+        patchCall(callId, { status: "analyzing" });
       }
       if (st.status === "failed") throw new Error(st.error || st.detail || "Bot failed");
       if (st.status === "done" && st.transcriptText?.trim()) return st.transcriptText.trim();
@@ -691,12 +778,19 @@ export function CallIQPage() {
             title: `${meetingHostLabel(meetingUrl)} call`,
           });
     setBotSessionId(botId);
+    saveLiveBot({ botId, callId: draft.id, meetingUrl, startedAt: Date.now() });
     setStages((prev) =>
       prev.map((s) => (s.id === "bot" ? { ...s, label: "Bot in Meet", detail: "waiting for call to end" } : s)),
     );
 
-    const text = await pollUntilTranscript(botId);
+    const text = await pollUntilTranscript(botId, draft.id);
     setTranscript(text);
+    const already = loadCalls().find((c) => c.id === draft.id);
+    if (already?.analysis) {
+      setShowJoin(false);
+      saveLiveBot(null);
+      return;
+    }
     setPipelineActive("recap");
     setPipelineDone(["bot", "hear"]);
     setStages((prev) =>
@@ -710,13 +804,57 @@ export function CallIQPage() {
     );
     setBotNote("Hear ready. Running Recap…");
     await analyze(text, { callId: draft.id, keepPipeline: true, source: "meet" });
+    saveLiveBot(null);
     setShowJoin(false);
+  }
+
+  async function resumeLiveBot(live: { botId: string; callId: string; meetingUrl: string }) {
+    if (joinInFlight.current) return;
+    joinInFlight.current = true;
+    setMeetUrl(live.meetingUrl);
+    setWorkingCallId(live.callId);
+    setSelectedId(live.callId);
+    saveSelectedCallId(live.callId);
+    setShowJoin(true);
+    setBotBusy(true);
+    setError(null);
+    setDetailTab("transcript");
+    setPipelineActive("bot");
+    setPipelineDone([]);
+    setStages([
+      { id: "bot", label: "Bot in Meet", detail: "resumed in this tab" },
+      { id: "hear", label: "Hear — live captions…", detail: "syncing" },
+      { id: "recap", label: "Recap — deal notes…", detail: "waiting" },
+    ]);
+    const existing = loadCalls().find((c) => c.id === live.callId);
+    if (existing?.transcript) setTranscript(existing.transcript);
+    try {
+      await runLiveBotSession(live.botId, live.meetingUrl, live.callId);
+    } catch (e) {
+      if (pollAbort.current) return;
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!/not found/i.test(msg)) setError(msg);
+    } finally {
+      joinInFlight.current = false;
+      setBotBusy(false);
+      setBotSessionId(null);
+      setLeavingBot(false);
+    }
   }
 
   async function joinBot(urlOverride?: string) {
     if (joinInFlight.current) return;
     const raw = (urlOverride ?? meetUrl).trim();
     const url = extractMeetingUrl(raw) ?? raw;
+    if (botBusy && (extractMeetingUrl(meetUrl) ?? meetUrl) === url) {
+      setShowJoin(true);
+      return;
+    }
+    const existingLive = loadLiveBot();
+    if (existingLive && extractMeetingUrl(existingLive.meetingUrl) === extractMeetingUrl(url)) {
+      void resumeLiveBot(existingLive);
+      return;
+    }
     if (!isUsableMeetingUrl(url)) {
       setError("Need a real Meet/Zoom/Teams link (not meet.google.com/new).");
       setShowJoin(true);
@@ -753,14 +891,17 @@ export function CallIQPage() {
           s.id === "bot" ? { ...s, label: `Bot (${join.provider})`, detail: join.detail ?? join.status } : s,
         ),
       );
+      saveLiveBot({ botId: join.id, callId: draft.id, meetingUrl: url, startedAt: Date.now() });
       await runLiveBotSession(join.id, url, draft.id);
     } catch (e) {
+      if (pollAbort.current) return;
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
       patchCall(draft.id, { status: "failed", error: msg });
       setStages([]);
       setPipelineActive(null);
       setPipelineDone([]);
+      saveLiveBot(null);
     } finally {
       joinInFlight.current = false;
       setBotBusy(false);
@@ -877,6 +1018,7 @@ export function CallIQPage() {
 
   const analysis = selected?.analysis;
   const inLiveSession = botBusy || meetPhase !== "idle";
+  const embedded = typeof window !== "undefined" && window.parent !== window;
 
   return (
     <div>
@@ -905,6 +1047,12 @@ export function CallIQPage() {
           </div>
         }
       />
+
+      {embedded ? (
+        <p className="mb-3 text-[11px] text-ink-500">
+          Stay in Meet. Live transcript and recap stay in this panel — no extra CallIQ tab.
+        </p>
+      ) : null}
 
       {error ? (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-status-block">

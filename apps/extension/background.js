@@ -82,11 +82,92 @@ function productPath(product, meetingUrl) {
   return `/calliq?join=${encodeURIComponent(meetingUrl || "")}`;
 }
 
+async function findProductTab(origin, product, preferredId) {
+  if (preferredId != null) {
+    const tab = await chrome.tabs.get(preferredId).catch(() => null);
+    if (tab?.id != null && (tab.url || "").startsWith(origin)) return tab;
+  }
+  const path = product === "brief" ? "/brief" : "/calliq";
+  const tabs = await chrome.tabs.query({ url: `${origin}/*` });
+  return (
+    tabs.find((tab) => {
+      try {
+        const pathname = new URL(tab.url || "").pathname;
+        return pathname === path || pathname.startsWith(`${path}/`);
+      } catch {
+        return false;
+      }
+    }) ?? null
+  );
+}
+
+function waitTabComplete(tabId) {
+  return new Promise((resolve) => {
+    const finish = () => {
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      resolve();
+    };
+    const timer = setTimeout(finish, 8000);
+    function onUpdated(id, info) {
+      if (id === tabId && info.status === "complete") {
+        clearTimeout(timer);
+        finish();
+      }
+    }
+    chrome.tabs.get(tabId)
+      .then((tab) => {
+        if (tab.status === "complete") {
+          clearTimeout(timer);
+          finish();
+        }
+      })
+      .catch(() => {
+        clearTimeout(timer);
+        finish();
+      });
+    chrome.tabs.onUpdated.addListener(onUpdated);
+  });
+}
+
+async function sidePanelIsOpen() {
+  if (!chrome.runtime.getContexts) return false;
+  const ctx = await chrome.runtime.getContexts({ contextTypes: ["SIDE_PANEL"] });
+  return ctx.length > 0;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function handoffToSidePanel(meetingUrl) {
+  await chrome.storage.local.set({
+    pendingCalliqJoin: { meetingUrl, at: Date.now() },
+  });
+  for (let i = 0; i < 10; i++) {
+    if (await sidePanelIsOpen()) return true;
+    await sleep(150);
+  }
+  return false;
+}
+
+async function handoffToExistingTab(tab, origin, product, meetingUrl) {
+  const target = `${origin}${productPath(product, meetingUrl)}`;
+  await waitTabComplete(tab.id);
+  const sent = await chrome.tabs
+    .sendMessage(tab.id, { type: "calliq.handoff", meetingUrl })
+    .catch(() => null);
+  if (sent?.ok) {
+    if (product === "brief") await chrome.tabs.update(tab.id, { active: true });
+    return true;
+  }
+  await chrome.tabs.update(tab.id, { url: target, active: product === "brief" });
+  return true;
+}
+
 async function handoffMeeting(meetingUrl) {
   if (!followMe) return;
   const origin = (followMe.webOrigin || (await getWebBase())).replace(/\/$/, "");
   const product = followMe.product || "calliq";
-  const target = `${origin}${productPath(product, meetingUrl)}`;
   const destTabId = followMe.destTabId;
   followMe = null;
   await chrome.storage.local.set({
@@ -95,15 +176,33 @@ async function handoffMeeting(meetingUrl) {
     lastHandoffProduct: product,
   });
 
-  if (destTabId != null) {
-    try {
-      await chrome.tabs.update(destTabId, { url: target, active: product === "brief" });
+  if (product === "calliq") {
+    const existing = await findProductTab(origin, "calliq", destTabId);
+    if (destTabId != null && existing?.id != null) {
+      await handoffToExistingTab(existing, origin, "calliq", meetingUrl);
       return;
-    } catch {
-      /* tab closed */
     }
+    if (await handoffToSidePanel(meetingUrl)) return;
+    if (existing?.id != null) {
+      await handoffToExistingTab(existing, origin, "calliq", meetingUrl);
+      return;
+    }
+    await chrome.tabs.create({
+      url: `${origin}${productPath("calliq", meetingUrl)}`,
+      active: false,
+    });
+    return;
   }
-  await chrome.tabs.create({ url: target, active: product === "brief" });
+
+  const existing = await findProductTab(origin, "brief", destTabId);
+  if (existing?.id != null) {
+    await handoffToExistingTab(existing, origin, "brief", meetingUrl);
+    return;
+  }
+  await chrome.tabs.create({
+    url: `${origin}${productPath("brief", meetingUrl)}`,
+    active: true,
+  });
 }
 
 async function startFollowMe(opts) {
@@ -206,6 +305,10 @@ chrome.commands.onCommand.addListener(async (command) => {
   } catch (e) {
     console.error("scrib dictate failed", String(e));
   }
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => undefined);
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

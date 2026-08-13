@@ -69,7 +69,7 @@ Unpacked MV3 in `apps/extension` — CallIQ bot join, Brief Meet capture, and Sc
 
 | Use | How |
 |-----|-----|
-| **CallIQ** | Popup → **Start call with CallIQ Bot** (opens Meet, then sends the bot into that room). Or join Meet first → **Bring bot into this Meet**. Admit **CallIQ Bot** in the waiting room. |
+| **CallIQ** | Popup → **Start call with CallIQ Bot** or **Bring bot into this Meet**. Stay in Meet — transcript is in the CallIQ **side panel** (not a new tab). Admit **one** CallIQ Bot. |
 | **Brief** | Popup → **Open Meet + Brief**, or join Meet first → **Capture this Meet in Brief**. In Brief, share the Meet tab with tab audio on (no bot). |
 | **Scrib** | Hold-to-record in the popup, or `Cmd/Ctrl+Shift+Space` to insert into the focused field. |
 

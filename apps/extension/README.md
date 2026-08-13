@@ -5,7 +5,7 @@
 1. Load unpacked from `apps/extension` (`chrome://extensions` → Developer mode). **Reload the extension after every pull.**
 2. If you are **already in Meet**, click **Bring bot into this Meet** (or Start call — it now uses the open Meet tab).
 3. If you are not in Meet, **Start call with CallIQ Bot** opens a new room, then sends the bot when the code appears.
-4. Admit **one** CallIQ Bot (People → waiting room). Host “quick access” may skip the admit prompt — look at the participant list.
+4. Stay in Meet. The transcript opens in the **CallIQ side panel** (not a new tab every time). Admit **one** CallIQ Bot.
 
 **I’m already in Meet — bring bot** finds your open Meet tab and sends the bot there.
 

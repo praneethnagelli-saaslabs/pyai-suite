@@ -27,6 +27,7 @@ const NAV = [
 
 export function Shell() {
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const embedded = typeof window !== "undefined" && window.parent !== window;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -40,7 +41,13 @@ export function Shell() {
   }, []);
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-7xl gap-6 px-4 py-5 md:px-6">
+    <div
+      className={cn(
+        "mx-auto flex min-h-screen max-w-7xl gap-6 px-4 py-5 md:px-6",
+        embedded && "max-w-none gap-0 px-2 py-2",
+      )}
+    >
+      {embedded ? null : (
       <aside className="hidden w-56 shrink-0 flex-col md:flex">
         <div className="mb-8 px-2">
           <div className="flex items-center gap-2">
@@ -83,14 +90,17 @@ export function Shell() {
           </span>
         </button>
       </aside>
+      )}
 
-      <main className="min-w-0 flex-1 pb-10">
+      <main className={cn("min-w-0 flex-1 pb-10", embedded && "pb-2")}>
+        {embedded ? null : (
         <div className="mb-4 flex items-center justify-between md:hidden">
           <div className="text-sm font-semibold">PyAI Suite</div>
           <button type="button" className="text-xs text-ink-500" onClick={() => setPaletteOpen(true)}>
             ⌘K
           </button>
         </div>
+        )}
         <Outlet />
       </main>
 

@@ -35,8 +35,19 @@ export interface CalliqCall {
   error?: string;
 }
 
-const KEY = "calliq.calls.v1";
-const SELECTED_KEY = "calliq.selected.v1";
+export const CALLIQ_CALLS_KEY = "calliq.calls.v1";
+export const CALLIQ_SELECTED_KEY = "calliq.selected.v1";
+export const CALLIQ_LIVE_KEY = "calliq.live.v1";
+
+const KEY = CALLIQ_CALLS_KEY;
+const SELECTED_KEY = CALLIQ_SELECTED_KEY;
+
+export type LiveBotSession = {
+  botId: string;
+  callId: string;
+  meetingUrl: string;
+  startedAt: number;
+};
 
 function safeParse(raw: string | null): CalliqCall[] {
   if (!raw) return [];
@@ -86,6 +97,40 @@ export function upsertCall(calls: CalliqCall[], next: CalliqCall): CalliqCall[] 
 
 export function deleteCall(calls: CalliqCall[], id: string): CalliqCall[] {
   return calls.filter((c) => c.id !== id);
+}
+
+export function loadLiveBot(): LiveBotSession | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(CALLIQ_LIVE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as Partial<LiveBotSession>;
+    if (!data.botId || !data.callId || !data.meetingUrl) return null;
+    return {
+      botId: String(data.botId),
+      callId: String(data.callId),
+      meetingUrl: String(data.meetingUrl),
+      startedAt: typeof data.startedAt === "number" ? data.startedAt : Date.now(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function saveLiveBot(live: LiveBotSession | null): void {
+  if (typeof localStorage === "undefined") return;
+  if (!live) localStorage.removeItem(CALLIQ_LIVE_KEY);
+  else localStorage.setItem(CALLIQ_LIVE_KEY, JSON.stringify(live));
+}
+
+export function findLiveCall(calls: CalliqCall[], meetingUrl: string): CalliqCall | undefined {
+  const needle = meetingUrl.trim();
+  return calls.find(
+    (c) =>
+      (c.status === "recording" || c.status === "analyzing") &&
+      Boolean(c.meetingUrl) &&
+      c.meetingUrl === needle,
+  );
 }
 
 export function newCallId(): string {

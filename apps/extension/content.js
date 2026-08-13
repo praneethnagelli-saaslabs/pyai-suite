@@ -64,6 +64,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendResponse({ ok: true, title: document.title, host: location.hostname });
     return true;
   }
+  if (msg?.type === "calliq.handoff" && msg.meetingUrl) {
+    window.postMessage({ type: "calliq.handoff.join", meetingUrl: msg.meetingUrl }, location.origin);
+    sendResponse({ ok: true, via: "tab" });
+    return true;
+  }
   return false;
 });
 

@@ -53,14 +53,24 @@ async function detectMeetTab() {
   }
 }
 
+async function openCalliqPanel() {
+  try {
+    const win = await chrome.windows.getCurrent();
+    if (win?.id != null) await chrome.sidePanel.open({ windowId: win.id });
+  } catch {
+    /* older Chrome / no gesture */
+  }
+}
+
 startWithBotBtn.addEventListener("click", async () => {
   await detectMeetTab();
   const alreadyInMeet = Boolean(activeMeetUrl);
   setStatus(
     alreadyInMeet
-      ? "Sending CallIQ Bot into this Meet…"
-      : "Opening Meet — bot will join the same room…",
+      ? "Sending CallIQ Bot — stay in Meet, transcript is in the side panel…"
+      : "Opening Meet — stay in that tab; transcript is in the side panel…",
   );
+  await openCalliqPanel();
   chrome.runtime.sendMessage(
     {
       type: "calliq.startWithBot",
@@ -74,10 +84,10 @@ startWithBotBtn.addEventListener("click", async () => {
         return;
       }
       if (res.joined) {
-        setStatus("CallIQ opened — admit one CallIQ Bot. Only you get the transcript.");
+        setStatus("Bot joining. Stay in Meet — transcript is in the CallIQ side panel.");
         return;
       }
-      setStatus("Join the Meet tab. Bot follows when the room is ready.");
+      setStatus("Join the Meet tab. Transcript will appear in the side panel.");
     },
   );
 });
@@ -128,7 +138,8 @@ calliqBtn.addEventListener("click", async () => {
     setStatus("No Meet URL on this tab yet");
     return;
   }
-  setStatus("Sending CallIQ Bot into this Meet…");
+  setStatus("Sending CallIQ Bot — stay in Meet, transcript is in the side panel…");
+  await openCalliqPanel();
   chrome.runtime.sendMessage(
     {
       type: "calliq.startWithBot",
@@ -141,7 +152,7 @@ calliqBtn.addEventListener("click", async () => {
         setStatus(`Error: ${res?.reason ?? "unknown"}`);
         return;
       }
-      setStatus("CallIQ opened — admit one CallIQ Bot. Only you get the transcript.");
+      setStatus("Bot joining. Stay in Meet — transcript is in the CallIQ side panel.");
     },
   );
 });

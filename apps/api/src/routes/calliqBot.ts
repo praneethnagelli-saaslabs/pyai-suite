@@ -19,6 +19,24 @@ function joinFailed(reply: { code: (n: number) => { send: (b: unknown) => unknow
 export async function calliqBotRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/calliq/bot/providers", async () => botProviderStatus());
 
+  app.get("/api/calliq/bot/current", async (req, reply) => {
+    const ownerId = meetingBotOwnerFromCookie(req.headers.cookie);
+    if (!ownerId) return reply.code(204).send();
+    const session = await getMeetingBot(ownerId);
+    if (!session) return reply.code(204).send();
+    return {
+      id: session.id,
+      provider: session.provider,
+      status: session.status,
+      meetingUrl: session.meetingUrl,
+      botName: session.botName,
+      detail: session.detail,
+      error: session.error,
+      transcriptText: session.transcriptText,
+      updatedAt: session.updatedAt,
+    };
+  });
+
   app.post<{
     Body: {
       meetingUrl?: string;
