@@ -289,6 +289,8 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
       mode?: string;
       sttProvider?: string;
       cleanupProvider?: string;
+      /** Previous insert — if speech is an edit instruction, rewrite instead of a new paste. */
+      lastText?: string;
     };
   }>("/api/scrib/transcribe", async (req, reply) => {
     const b64 = req.body.audioBase64 ?? "";
@@ -303,8 +305,12 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
     }
     if (!audio.length) return reply.code(400).send({ error: "empty audio" });
 
-    const { buildScribWorkflow, sanitizeTabContext } = await import("@pyai/scrib");
+    const { buildScribWorkflow, sanitizeTabContext, decideDictateOrRefine, clipSpeech } = await import(
+      "@pyai/scrib"
+    );
     const cleanupProvider = pickProvider(svc.platform, Capability.LLM, req.body.cleanupProvider);
+    const appName = clipSpeech(req.body.appName ?? "browser", 200) || "browser";
+    const lastText = clipSpeech(req.body.lastText, 8_000);
     const tHear = Date.now();
     let transcriptText = "";
     let sttProvider = "mock";
@@ -330,10 +336,42 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
     }
 
     try {
+      if (lastText) {
+        const decision = await decideDictateOrRefine(svc.platform, {
+          lastText,
+          speech: transcriptText,
+          appName,
+          cleanupProvider,
+        });
+        if (decision.action === "refine") {
+          return {
+            action: "refine" as const,
+            status: "SUCCEEDED",
+            transcript: transcriptText,
+            raw: lastText,
+            cleaned: decision.text,
+            mode: "light",
+            appRuleId: appName,
+            sttProvider,
+            cleanupProvider: decision.provider,
+            latency: { sttMs, cleanupMs: 0, dictionaryMs: 0, totalMs: sttMs },
+            stages: [
+              {
+                id: "hear",
+                label: "Transcribe",
+                detail: sttErrors.length ? `${sttProvider} (fallback)` : sttProvider,
+                ms: sttMs,
+              },
+              { id: "refine", label: "Refine last insert", detail: decision.provider },
+            ],
+          };
+        }
+      }
+
       const { def, getArtifact } = buildScribWorkflow(svc.platform, {
         rawText: transcriptText,
         mode: req.body.mode as never,
-        appName: req.body.appName ?? "browser",
+        appName,
         tabContext: sanitizeTabContext(req.body.tabContext),
         sttProvider,
         sttMs,
@@ -346,6 +384,7 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
         return reply.code(502).send({ error: firstErr });
       }
       return {
+        action: "dictate" as const,
         status: out.status,
         runId: out.runId,
         durationMs: out.durationMs,

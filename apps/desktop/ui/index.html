@@ -86,7 +86,8 @@
           transform 200ms var(--ease);
       }
 
-      body.listening #bezel {
+      body.listening #bezel,
+      body.editing #bezel {
         box-shadow:
           inset 0 1px 0 var(--inset),
           0 0 0 1px rgba(94, 234, 212, 0.12),
@@ -135,29 +136,34 @@
         display: none;
       }
 
-      body.listening .orb {
+      body.listening .orb,
+      body.editing .orb {
         color: var(--graphite);
         background: var(--accent);
         border-color: transparent;
         box-shadow: 0 0 0 6px rgba(94, 234, 212, 0.12);
       }
 
-      body.transcribing .orb {
+      body.transcribing .orb,
+      body.updating .orb {
         color: var(--accent);
         box-shadow: 0 0 0 5px rgba(94, 234, 212, 0.08);
       }
 
-      body.pasted .orb {
+      body.pasted .orb,
+      body.updated .orb {
         color: var(--graphite);
         background: var(--success);
         border-color: transparent;
       }
 
-      body.pasted .orb .mic {
+      body.pasted .orb .mic,
+      body.updated .orb .mic {
         display: none;
       }
 
-      body.pasted .orb .check {
+      body.pasted .orb .check,
+      body.updated .orb .check {
         display: block;
       }
 
@@ -219,7 +225,8 @@
 
       body.needax #wave,
       body.error #wave,
-      body.pasted #wave {
+      body.pasted #wave,
+      body.updated #wave {
         opacity: 0.28;
       }
 
@@ -233,11 +240,13 @@
         transform-origin: center;
       }
 
-      body.listening #wave i {
+      body.listening #wave i,
+      body.editing #wave i {
         opacity: 0.88;
       }
 
-      body.transcribing #wave i {
+      body.transcribing #wave i,
+      body.updating #wave i {
         background: var(--accent);
         opacity: 0.7;
       }
@@ -274,8 +283,11 @@
     <script>
       const COPY = {
         listening: { title: "Listening", caption: "Release to paste" },
+        editing: { title: "Editing", caption: "Release to tweak" },
         transcribing: { title: "Understanding", caption: "Turning speech into text" },
-        pasted: { title: "Pasted", caption: "Right where you were" },
+        updating: { title: "Updating", caption: "Rewriting the last insert" },
+        pasted: { title: "Pasted", caption: "Hold again to tweak" },
+        updated: { title: "Updated", caption: "Same place" },
         error: { title: "Couldn't finish", caption: "" },
         needax: { title: "Allow Accessibility", caption: "Then Scrib can paste for you · Cmd+V for now" },
         idle: { title: "Scrib", caption: "Hold Control+Shift+1" },
@@ -295,16 +307,16 @@
 
       function heights(now) {
         return bars.map((_, i) => {
-          if (phase === "listening") {
+          if (phase === "listening" || phase === "editing") {
             const a = Math.sin(now / 210 + i * 0.41);
             const b = Math.sin(now / 140 + i * 0.17);
             return 4 + 22 * Math.abs(a * b) * seeds[i];
           }
-          if (phase === "transcribing") {
+          if (phase === "transcribing" || phase === "updating") {
             const n = Math.sin(now / 520 + i * 0.33);
             return 4 + 7 * (0.55 + 0.45 * n);
           }
-          if (phase === "pasted") {
+          if (phase === "pasted" || phase === "updated") {
             return 4;
           }
           return 4 + (i % 3);
@@ -317,7 +329,7 @@
         for (let i = 0; i < bars.length; i++) {
           bars[i].style.height = h[i].toFixed(1) + "px";
         }
-        if (phase === "listening" || phase === "transcribing") {
+        if (phase === "listening" || phase === "editing" || phase === "transcribing" || phase === "updating") {
           raf = requestAnimationFrame(frame);
         } else {
           raf = 0;
@@ -343,8 +355,12 @@
         document.getElementById("title").textContent = row.title;
         let caption = row.caption;
         if (key === "error" && app) caption = app;
-        else if (app && (key === "listening" || key === "transcribing")) {
-          caption = key === "listening" ? `${app} · release to paste` : `Cleaning for ${app}`;
+        else if (app && (key === "listening" || key === "editing")) {
+          caption = key === "editing" ? `${app} · release to tweak` : `${app} · release to paste`;
+        } else if (app && (key === "transcribing" || key === "updating")) {
+          caption = key === "updating" ? `Rewriting for ${app}` : `Cleaning for ${app}`;
+        } else if (app && key === "updated") {
+          caption = `Updated in ${app}`;
         }
         document.getElementById("caption").textContent = caption;
         runWave(key);

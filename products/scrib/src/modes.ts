@@ -142,6 +142,22 @@ export function cleanupUserMessage(transcript: string, ctx?: TabContext, appName
   ].join("\n");
 }
 
+/** Offline deterministic cleanup for Mock/Demo paths. */
+export function localCleanup(text: string, mode: CleanupMode): string {
+  if (mode === "raw") return text.trim();
+  let t = text.replace(/\b(uh+|um+|er+|like)\b/gi, "").replace(/\s{2,}/g, " ").trim();
+  if (!t) return text.trim();
+  t = t.charAt(0).toUpperCase() + t.slice(1);
+  if (!/[.!?]$/.test(t)) t += mode === "concise" ? "" : ".";
+  if (mode === "professional") {
+    t = t.replace(/\bgotta\b/gi, "have to").replace(/\bwanna\b/gi, "want to");
+  }
+  if (mode === "concise") {
+    t = t.replace(/\b(just|really|very|actually)\b/gi, "").replace(/\s{2,}/g, " ").trim();
+  }
+  return t;
+}
+
 /** Detect common "assistant answered instead of cleaned" failures. */
 export function looksLikeAssistantReply(raw: string, cleaned: string): boolean {
   const c = cleaned.trim().toLowerCase();

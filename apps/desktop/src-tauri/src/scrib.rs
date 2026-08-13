@@ -222,26 +222,53 @@ pub fn api_base() -> Result<String, String> {
 
 #[derive(Deserialize)]
 struct TranscribeOut {
+    action: Option<String>,
     cleaned: Option<String>,
     transcript: Option<String>,
     raw: Option<String>,
     error: Option<String>,
 }
 
-pub fn transcribe(wav: &[u8], app: &ActiveApp) -> Result<String, String> {
-    let base = api_base()?;
-    let b64 = base64::engine::general_purpose::STANDARD.encode(wav);
-    let app_name: String = app
-        .name
-        .chars()
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SpeechAction {
+    Dictate,
+    Refine,
+}
+
+pub struct TranscribeResult {
+    pub text: String,
+    pub action: SpeechAction,
+}
+
+fn clip_app_name(name: &str) -> String {
+    name.chars()
         .filter(|c| !c.is_control())
         .take(200)
-        .collect();
-    let body = serde_json::json!({
+        .collect()
+}
+
+pub fn transcribe(
+    wav: &[u8],
+    app: &ActiveApp,
+    last_text: Option<&str>,
+) -> Result<TranscribeResult, String> {
+    let base = api_base()?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(wav);
+    let app_name = clip_app_name(&app.name);
+    let last = last_text
+        .unwrap_or("")
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(8_000)
+        .collect::<String>();
+    let mut body = serde_json::json!({
         "audioBase64": b64,
         "format": "wav",
         "appName": if app_name.is_empty() { "macOS" } else { app_name.as_str() },
     });
+    if !last.is_empty() {
+        body["lastText"] = serde_json::Value::String(last);
+    }
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(120))
         .build()
@@ -257,11 +284,18 @@ pub fn transcribe(wav: &[u8], app: &ActiveApp) -> Result<String, String> {
     if !status.is_success() {
         return Err(out.error.unwrap_or_else(|| format!("transcribe failed: {status}")));
     }
-    out.cleaned
+    let text = out
+        .cleaned
         .or(out.transcript)
         .or(out.raw)
         .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| "No speech.".to_string())
+        .ok_or_else(|| "No speech.".to_string())?;
+    let action = if out.action.as_deref() == Some("refine") {
+        SpeechAction::Refine
+    } else {
+        SpeechAction::Dictate
+    };
+    Ok(TranscribeResult { text, action })
 }
 
 /// Silent check only. Never call `application_is_trusted_with_prompt` —
@@ -296,6 +330,20 @@ pub fn open_accessibility_settings() {
         .spawn();
 }
 
+fn cmd_stroke(ch: char) -> Result<(), String> {
+    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
+    enigo
+        .key(Key::Meta, Direction::Press)
+        .map_err(|e| e.to_string())?;
+    enigo
+        .key(Key::Unicode(ch), Direction::Click)
+        .map_err(|e| e.to_string())?;
+    enigo
+        .key(Key::Meta, Direction::Release)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Paste at the OS caret: clipboard + Cmd+V, then restore the previous clipboard.
 /// If Accessibility is off, leave text on the clipboard and return a hint.
 pub fn insert_text(text: &str) -> Result<(), String> {
@@ -310,21 +358,29 @@ pub fn insert_text(text: &str) -> Result<(), String> {
         return Err(NEED_ACCESSIBILITY.into());
     }
     thread::sleep(Duration::from_millis(40));
-    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
-    enigo
-        .key(Key::Meta, Direction::Press)
-        .map_err(|e| e.to_string())?;
-    enigo
-        .key(Key::Unicode('v'), Direction::Click)
-        .map_err(|e| e.to_string())?;
-    enigo
-        .key(Key::Meta, Direction::Release)
-        .map_err(|e| e.to_string())?;
+    cmd_stroke('v')?;
     thread::sleep(Duration::from_millis(80));
     if let Some(prev) = previous {
         let _ = clip.set_text(prev);
     }
     Ok(())
+}
+
+/// Undo the last paste (Cmd+Z) then insert the refined text in the same place.
+pub fn replace_last_insert(text: &str) -> Result<(), String> {
+    if text.is_empty() {
+        return Err("empty insert".into());
+    }
+    if !accessibility_ready() {
+        let mut clip = Clipboard::new().map_err(|e| e.to_string())?;
+        clip.set_text(text).map_err(|e| e.to_string())?;
+        open_accessibility_settings();
+        return Err(NEED_ACCESSIBILITY.into());
+    }
+    thread::sleep(Duration::from_millis(40));
+    cmd_stroke('z')?;
+    thread::sleep(Duration::from_millis(90));
+    insert_text(text)
 }
 
 #[cfg(target_os = "macos")]

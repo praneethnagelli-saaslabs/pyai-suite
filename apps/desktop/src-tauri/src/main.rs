@@ -11,13 +11,23 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, LogicalPosition, Manager, WebviewWindow};
 
-use crate::scrib::{ActiveApp, RecCmd};
+use crate::scrib::{ActiveApp, RecCmd, SpeechAction};
+
+const REFINE_WINDOW: Duration = Duration::from_secs(60);
+
+#[derive(Clone)]
+struct LastInsert {
+    text: String,
+    app_name: String,
+    at: Instant,
+    can_undo: bool,
+}
 
 struct AppState {
     mic: Sender<RecCmd>,
@@ -25,6 +35,23 @@ struct AppState {
     listening: AtomicBool,
     transcribing: AtomicBool,
     target_app: Mutex<Option<ActiveApp>>,
+    last_insert: Mutex<Option<LastInsert>>,
+}
+
+fn same_app(a: &str, b: &str) -> bool {
+    a.trim().eq_ignore_ascii_case(b.trim())
+}
+
+fn recent_insert(state: &AppState, app_name: &str) -> Option<LastInsert> {
+    let guard = state.last_insert.lock().ok()?;
+    let last = guard.as_ref()?;
+    if last.at.elapsed() > REFINE_WINDOW {
+        return None;
+    }
+    if !same_app(&last.app_name, app_name) {
+        return None;
+    }
+    Some(last.clone())
 }
 
 fn set_tray(app: &AppHandle, text: &str) {
@@ -137,7 +164,6 @@ fn flash_then_idle(app: AppHandle, phase: &'static str, detail: String, tray: St
 }
 
 fn on_ptt_down(app: AppHandle) {
-    push_bezel(&app, "listening", "");
     let Some(state) = app.try_state::<AppState>() else {
         return;
     };
@@ -165,11 +191,17 @@ fn start_listening(app: AppHandle) {
     if let Ok(mut slot) = state.target_app.lock() {
         *slot = Some(target.clone());
     }
+    let editing = recent_insert(&state, &target.name).is_some();
     match scrib::mic_start(&state.mic) {
         Ok(()) => {
             state.listening.store(true, Ordering::SeqCst);
-            set_tray(&app, "Listening… release to paste");
-            push_bezel(&app, "listening", &target.name);
+            if editing {
+                set_tray(&app, "Editing… release to tweak");
+                push_bezel(&app, "editing", &target.name);
+            } else {
+                set_tray(&app, "Listening… release to paste");
+                push_bezel(&app, "listening", &target.name);
+            }
         }
         Err(e) => {
             state.listening.store(false, Ordering::SeqCst);
@@ -184,14 +216,20 @@ fn stop_and_paste(app: AppHandle) {
     };
     state.listening.store(false, Ordering::SeqCst);
     state.transcribing.store(true, Ordering::SeqCst);
-    set_tray(&app, "Transcribing…");
     let for_app = state
         .target_app
         .lock()
         .ok()
         .and_then(|g| g.as_ref().map(|a| a.name.clone()))
         .unwrap_or_default();
-    push_bezel(&app, "transcribing", &for_app);
+    let last = recent_insert(&state, &for_app);
+    if last.is_some() {
+        set_tray(&app, "Updating…");
+        push_bezel(&app, "updating", &for_app);
+    } else {
+        set_tray(&app, "Transcribing…");
+        push_bezel(&app, "transcribing", &for_app);
+    }
 
     let wav = match scrib::mic_stop(&state.mic) {
         Ok(w) => w,
@@ -207,26 +245,65 @@ fn stop_and_paste(app: AppHandle) {
         .ok()
         .and_then(|g| g.clone())
         .unwrap_or_else(scrib::frontmost_app);
+    let last_text = last.as_ref().map(|l| l.text.clone());
+    let can_undo = last.as_ref().is_some_and(|l| l.can_undo);
 
     thread::Builder::new()
         .name("scrib-transcribe".into())
         .spawn(move || {
-            let result = scrib::transcribe(&wav, &target);
+            let result = scrib::transcribe(&wav, &target, last_text.as_deref());
             if let Some(state) = app.try_state::<AppState>() {
                 state.transcribing.store(false, Ordering::SeqCst);
             }
             match result {
-                Ok(text) => {
+                Ok(out) => {
+                    let refine = out.action == SpeechAction::Refine && can_undo;
                     hide_bezel_for_paste(&app);
                     thread::sleep(Duration::from_millis(80));
-                    match scrib::insert_text(&text) {
-                        Ok(()) => flash_then_idle(
-                            app,
-                            "pasted",
-                            "".into(),
-                            "Pasted — hold Control+Shift+1".into(),
-                        ),
+                    let inserted = if refine {
+                        scrib::replace_last_insert(&out.text)
+                    } else {
+                        scrib::insert_text(&out.text)
+                    };
+                    match inserted {
+                        Ok(()) => {
+                            if let Some(state) = app.try_state::<AppState>() {
+                                if let Ok(mut slot) = state.last_insert.lock() {
+                                    *slot = Some(LastInsert {
+                                        text: out.text,
+                                        app_name: target.name.clone(),
+                                        at: Instant::now(),
+                                        can_undo: true,
+                                    });
+                                }
+                            }
+                            if refine {
+                                flash_then_idle(
+                                    app,
+                                    "updated",
+                                    target.name,
+                                    "Updated — hold again to tweak".into(),
+                                );
+                            } else {
+                                flash_then_idle(
+                                    app,
+                                    "pasted",
+                                    "".into(),
+                                    "Pasted — hold again to tweak".into(),
+                                );
+                            }
+                        }
                         Err(e) if e == scrib::NEED_ACCESSIBILITY => {
+                            if let Some(state) = app.try_state::<AppState>() {
+                                if let Ok(mut slot) = state.last_insert.lock() {
+                                    *slot = Some(LastInsert {
+                                        text: out.text,
+                                        app_name: target.name,
+                                        at: Instant::now(),
+                                        can_undo: false,
+                                    });
+                                }
+                            }
                             set_tray(&app, &e);
                             push_bezel(&app, "needax", "");
                             thread::spawn(move || {
@@ -295,6 +372,7 @@ fn main() {
             listening: AtomicBool::new(false),
             transcribing: AtomicBool::new(false),
             target_app: Mutex::new(None),
+            last_insert: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             start_capture,

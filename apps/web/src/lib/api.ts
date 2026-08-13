@@ -395,12 +395,14 @@ export const api = {
     audioBase64: string;
     format?: string;
     appName?: string;
+    lastText?: string;
     tabContext?: { host?: string; path?: string; title?: string; field?: string };
     mode?: string;
     sttProvider?: string;
     cleanupProvider?: string;
   }) =>
     request<{
+      action?: "dictate" | "refine";
       status: string;
       runId: string;
       raw: string;

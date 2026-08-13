@@ -6,9 +6,9 @@ This is a **tray-only** Tauri 2 app (spec #70). It does not wrap the web UI. Pro
 
 ```
 Hold Control+Shift+1  → bezel: Listening
-Release               → bezel: Understanding
-  → POST http://127.0.0.1:4000/api/scrib/transcribe
-  → clipboard + Cmd+V (then restore clipboard)
+Release               → bezel: Understanding → paste
+Hold again (same app, within 60s) and say “shorter” / “as an email”
+                      → bezel: Editing → Cmd+Z + paste the rewrite
 ```
 
 ## End-to-end setup
@@ -87,6 +87,7 @@ On launch a floating bezel should flash above the Dock. Then:
 2. Click into TextEdit / VS Code / Slack / a Doc
 3. **Hold Control+Shift+1** — bezel **Listening** with waveform
 4. Speak, **release** — **Understanding**, then paste
+5. Stay in the same app, hold again within a minute — bezel **Editing**. Say **“make it shorter”** — it undoes and pastes the rewrite.
 
 Hotkey uses keyboard HID state (not an Accessibility event tap). Accessibility is only required to auto-press Cmd+V.
 
@@ -111,13 +112,14 @@ Same path Wispr Flow uses when AX insert is unavailable:
 
 Default base is `http://127.0.0.1:4000` (loopback only). Override with `PYAI_API_BASE` if you must point elsewhere — non-localhost is refused unless that env var is set explicitly.
 
-Each dictate sends the frontmost app name so cleanup can match Slack vs Mail vs VS Code:
+Each dictate sends the frontmost app name so cleanup can match Slack vs Mail vs VS Code. A second hold within 60s in the same app also sends `lastText` (the previous insert). If you spoke an edit (“make it shorter”), the API returns `action: "refine"` and the tray undoes then pastes.
 
 ```json
 {
   "audioBase64": "…",
   "format": "wav",
-  "appName": "Slack"
+  "appName": "Slack",
+  "lastText": "Hey can you send this tomorrow"
 }
 ```
 
