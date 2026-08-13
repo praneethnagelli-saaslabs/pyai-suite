@@ -29,7 +29,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
       { id: "calliq", label: "Open CallIQ", hint: "Conversation workspace", group: "Navigate", run: () => navigate("/calliq") },
       { id: "scrib", label: "Open Scrib", hint: "Voice dictation", group: "Navigate", run: () => navigate("/scrib") },
       { id: "brief", label: "Open Brief", hint: "Meeting brain", group: "Navigate", run: () => navigate("/brief") },
-      { id: "simulator", label: "Open Simulator", hint: "Voice agent stress test", group: "Navigate", run: () => navigate("/simulator") },
+      { id: "simulator", label: "Open Simulator", hint: "Live call, persona, agents", group: "Navigate", run: () => navigate("/simulator") },
       { id: "playground", label: "Open model arena", hint: "Compare providers", group: "Navigate", run: () => navigate("/playground") },
       { id: "runs", label: "Open last runs", group: "Navigate", run: () => navigate("/runs") },
       { id: "providers", label: "Manage providers", group: "Navigate", run: () => navigate("/providers") },

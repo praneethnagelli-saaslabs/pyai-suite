@@ -512,4 +512,86 @@ export const api = {
         }>;
       };
     }>("/api/simulator/run", { method: "POST", body: JSON.stringify(body) }),
+  simulatorLive: () =>
+    request<{
+      voices: Array<{ id: string; label: string }>;
+      providers: Array<{ id: string; name: string; configured: boolean; role: string }>;
+      primary: string;
+    }>("/api/simulator/live"),
+  simulatorAgents: () => request<{ agents: SimulatorAgent[] }>("/api/simulator/agents"),
+  simulatorCreateAgent: (body: Partial<SimulatorAgent>) =>
+    request<{ agent: SimulatorAgent }>("/api/simulator/agents", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  simulatorUpdateAgent: (id: string, body: Partial<SimulatorAgent> & { note?: string }) =>
+    request<{ agent: SimulatorAgent }>(`/api/simulator/agents/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  simulatorActivateVersion: (id: string, version: number) =>
+    request<{ agent: SimulatorAgent }>(`/api/simulator/agents/${encodeURIComponent(id)}/activate`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    }),
+  simulatorScenarios: () => request<{ scenarios: SimulatorScenario[] }>("/api/simulator/scenarios"),
+  simulatorCreateScenario: (body: Partial<SimulatorScenario>) =>
+    request<{ scenario: SimulatorScenario }>("/api/simulator/scenarios", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  simulatorUpdateScenario: (id: string, body: Partial<SimulatorScenario>) =>
+    request<{ scenario: SimulatorScenario }>(`/api/simulator/scenarios/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
 };
+
+export interface SimulatorAgentVersion {
+  version: number;
+  name: string;
+  prompt: string;
+  voice: string;
+  greeting: string;
+  personality: string;
+  personalityNotes: string;
+  role: string;
+  createdAt: number;
+  note: string;
+}
+
+export interface SimulatorAgent {
+  id: string;
+  name: string;
+  description: string;
+  role: string;
+  industry: string;
+  language: string;
+  personality: string;
+  personalityNotes: string;
+  voice: string;
+  greeting: string;
+  prompt: string;
+  activeVersion: number;
+  versions: SimulatorAgentVersion[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SimulatorScenario {
+  id: string;
+  name: string;
+  goal: string;
+  customerPersona: string;
+  personality: string;
+  emotionalState: string;
+  patience: "low" | "medium" | "high";
+  openingLine: string;
+  expected: string[];
+  failures: string[];
+  objections: string[];
+  known: string[];
+  unknown: string[];
+  escalation: string;
+  builtIn: boolean;
+}

@@ -23,7 +23,7 @@ const PRODUCT_NAV = [
   { to: "/calliq", label: "CallIQ", hint: "Call intelligence", icon: AudioLines },
   { to: "/scrib", label: "Scrib", hint: "Dictation", icon: Mic2 },
   { to: "/brief", label: "Brief", hint: "Meeting notes", icon: Brain },
-  { to: "/simulator", label: "Simulator", hint: "Agent tests", icon: Bot },
+  { to: "/simulator", label: "Simulator", hint: "Live call + persona tests", icon: Bot },
 ];
 
 const PLATFORM_NAV = [

@@ -4,6 +4,7 @@
 export * from "./types.js";
 export * from "./providers/adapter.js";
 export * from "./providers/registry.js";
+export { classifyRealtimeFailure, PCM_RATE, tonePcm } from "./providers/realtime-shared.js";
 export { MockProvider } from "./providers/mock.js";
 export { PyAIProvider, mintPyAISandboxKey, PYAI_DEFAULT_BASE_URL } from "./providers/pyai.js";
 export { OpenAIProvider } from "./providers/openai.js";

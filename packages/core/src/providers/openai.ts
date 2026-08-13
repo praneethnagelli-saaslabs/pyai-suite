@@ -10,7 +10,9 @@ import {
   type TTSAdapter,
   type TTSResult,
   type EmbeddingsAdapter,
+  type RealtimeAdapter,
 } from "./adapter.js";
+import { createOpenAIRealtime } from "./realtime-openai.js";
 import { logger } from "../util/logger.js";
 
 /**
@@ -205,6 +207,8 @@ export class OpenAIProvider implements ProviderAdapter {
       },
     };
   };
+
+  asRealtime = (): RealtimeAdapter => createOpenAIRealtime({ apiKey: this.key, baseUrl: this.baseUrl });
 
   asEmbeddings = (): EmbeddingsAdapter => {
     const baseUrl = this.baseUrl;

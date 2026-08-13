@@ -103,19 +103,60 @@ export interface EmbeddingsAdapter {
   embed(req: EmbeddingsRequest): Promise<EmbeddingsResult>;
 }
 
+export type RealtimeFallbackReason =
+  | "TIMEOUT"
+  | "UNAVAILABLE"
+  | "RATE_LIMIT"
+  | "MALFORMED"
+  | "CONNECTION"
+  | "STREAM"
+  | "ERROR";
+
+export type RealtimeEventType =
+  | "session.started"
+  | "user.speech_started"
+  | "user.speech_ended"
+  | "transcript"
+  | "agent.thinking"
+  | "agent.audio"
+  | "agent.speech_started"
+  | "agent.speech_ended"
+  | "interrupted"
+  | "error"
+  | "ended";
+
+export interface RealtimeSessionConfig {
+  systemPrompt?: string;
+  voice?: string;
+  greeting?: string;
+  model?: string;
+  sampleRate?: number;
+  /** Opaque correlation id only — never a secret or transcript. */
+  sessionLabel?: string;
+}
+
 export interface RealtimeSessionHandle {
   sendAudio(chunk: Uint8Array): void;
+  /** End the current user utterance so the agent can reply (OpenAI commit / mock). */
+  commitInput?(): void;
+  interrupt(): Promise<void>;
   events(): AsyncIterable<RealtimeEvent>;
   close(): Promise<void>;
 }
 
 export interface RealtimeEvent {
-  type: string;
+  type: RealtimeEventType | string;
   text?: string;
+  speaker?: "user" | "agent";
+  isFinal?: boolean;
+  audio?: Uint8Array;
+  format?: string;
+  sampleRate?: number;
+  error?: string;
 }
 
 export interface RealtimeAdapter {
-  startSession(opts: { model?: string; systemPrompt?: string }): Promise<RealtimeSessionHandle>;
+  startSession(opts: RealtimeSessionConfig): Promise<RealtimeSessionHandle>;
 }
 
 /**

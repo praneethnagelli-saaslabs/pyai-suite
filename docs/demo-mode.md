@@ -4,7 +4,8 @@ Every product ships a Demo Mode that works WITHOUT provider credentials.
 
 Mechanism:
 - The MockProvider (deterministic, no network) supplies believable, evidence-linked
-  outputs for STT/LLM/TTS/Embeddings.
+  outputs for STT/LLM/TTS/Embeddings and a realtime voice session (tone + transcript).
+  Simulator persona mode uses the same mock customer script + chatter when no LLM/TTS key is set.
 - Sample datasets live in `evals/<product>/` and `/api/sample/<product>`.
 - UI shows a clear "DEMO DATA" badge whenever synthetic output is shown, so users
   never confuse demo output with a real provider call.

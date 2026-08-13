@@ -12,6 +12,8 @@ import { realtimeRoutes } from "./routes/realtime.js";
 import { sttRoutes } from "./routes/stt.js";
 import { calliqBotRoutes } from "./routes/calliqBot.js";
 import { googleMeetRoutes } from "./routes/googleMeet.js";
+import { simulatorCallRoutes } from "./routes/simulatorCall.js";
+import { simulatorCatalogRoutes } from "./routes/simulatorCatalog.js";
 import { transcribeWithFallback } from "./providerPick.js";
 import { setMeetingBotHear } from "./meetingBot/index.js";
 
@@ -51,6 +53,8 @@ export async function buildServer() {
   await app.register(async (a) => sttRoutes(a, svc));
   await app.register(async (a) => calliqBotRoutes(a));
   await app.register(async (a) => googleMeetRoutes(a));
+  await app.register(async (a) => simulatorCallRoutes(a, svc));
+  await app.register(async (a) => simulatorCatalogRoutes(a, svc));
 
   app.get("/health", async () => ({
     status: "ok",

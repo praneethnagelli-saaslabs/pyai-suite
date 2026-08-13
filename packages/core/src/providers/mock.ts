@@ -11,7 +11,9 @@ import {
   type TTSAdapter,
   type TTSResult,
   type EmbeddingsAdapter,
+  type RealtimeAdapter,
 } from "./adapter.js";
+import { MockRealtimeAdapter } from "./realtime-mock.js";
 
 /**
  * MockProvider — a fully-functional, deterministic provider used for local
@@ -35,6 +37,7 @@ export class MockProvider implements ProviderAdapter {
     "tool_calling",
     "tts",
     "streaming_tts",
+    "realtime_voice",
     "embeddings",
   ];
 
@@ -48,6 +51,7 @@ export class MockProvider implements ProviderAdapter {
       { id: "mock-flash", provider: "mock", label: "Mock Flash (LLM)", capabilities: ["llm", "structured_output", "tool_calling"], contextWindow: 128_000, latencyClass: "low", qualityClass: "medium", pricing: { inputCostPerUnit: 0, outputCostPerUnit: 0, currency: "USD" } },
       { id: "mock-opus", provider: "mock", label: "Mock Opus (reasoning)", capabilities: ["llm", "reasoning_llm", "structured_output"], contextWindow: 200_000, latencyClass: "medium", qualityClass: "high", pricing: { inputCostPerUnit: 0, outputCostPerUnit: 0, currency: "USD" } },
       { id: "mock-speak", provider: "mock", label: "Mock Speak (TTS)", capabilities: ["tts", "streaming_tts"], latencyClass: "low", pricing: { audioCostPerMinute: 0, currency: "USD" } },
+      { id: "mock-omni", provider: "mock", label: "Mock Omni (realtime)", capabilities: ["realtime_voice"], supportsStreaming: true, latencyClass: "low", qualityClass: "medium" },
       { id: "mock-embed", provider: "mock", label: "Mock Embeddings", capabilities: ["embeddings"], latencyClass: "low", pricing: { inputCostPerUnit: 0, currency: "USD" } },
     ];
   }
@@ -111,6 +115,10 @@ export class MockProvider implements ProviderAdapter {
         };
       },
     };
+  }
+
+  asRealtime(): RealtimeAdapter {
+    return new MockRealtimeAdapter();
   }
 
   asEmbeddings(): EmbeddingsAdapter {

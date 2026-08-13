@@ -8,7 +8,9 @@ import {
   type TranscriptSegment,
   type TTSAdapter,
   type TTSResult,
+  type RealtimeAdapter,
 } from "./adapter.js";
+import { createPyAIRealtime } from "./realtime-pyai.js";
 import { logger } from "../util/logger.js";
 
 /**
@@ -191,6 +193,8 @@ export class PyAIProvider implements ProviderAdapter {
       },
     };
   };
+
+  asRealtime = (): RealtimeAdapter => createPyAIRealtime({ apiKey: this.key, baseUrl: this.baseUrl });
 }
 
 /**

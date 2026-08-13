@@ -2,6 +2,7 @@ import { createPlatform, type Platform } from "@pyai/core";
 import { MeetingMemory } from "@pyai/brief";
 import { createRunStore, type RunStore } from "@pyai/db";
 import { createJobQueue, type JobQueue, InMemoryQueue } from "@pyai/worker";
+import { createSimulatorCatalog, type SimulatorCatalog } from "@pyai/simulator";
 
 /**
  * App-wide services built once and shared by every route (spec #55).
@@ -11,6 +12,7 @@ export interface AppServices {
   meetingMemory: MeetingMemory;
   runStore: RunStore;
   jobs: JobQueue;
+  simulator: SimulatorCatalog;
 }
 
 export async function createServices(): Promise<AppServices> {
@@ -28,5 +30,11 @@ export async function createServices(): Promise<AppServices> {
   } catch {
     jobs = new InMemoryQueue();
   }
-  return { platform, meetingMemory: new MeetingMemory(), runStore, jobs };
+  return {
+    platform,
+    meetingMemory: new MeetingMemory(),
+    runStore,
+    jobs,
+    simulator: createSimulatorCatalog(),
+  };
 }

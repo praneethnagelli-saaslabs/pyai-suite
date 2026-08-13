@@ -34,8 +34,8 @@ const PRODUCTS = [
     to: "/simulator",
     name: "Simulator",
     icon: Bot,
-    what: "Voice-agent stress test",
-    how: "Adversarial callers score your agent and build a benchmark card.",
+    what: "Voice-agent lab",
+    how: "Talk live, save agent versions, or let an AI customer run a scenario. Then stress-test for a benchmark card.",
     action: "Open Simulator",
   },
 ] as const;

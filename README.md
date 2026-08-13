@@ -9,7 +9,7 @@ Open-source AI product suite on a **provider-agnostic voice/AI platform**, with 
 | **CallIQ** | Sales-call intelligence | **Product demo** (simulated Meet) or **Join Meet as bot** (Attendee) → deal intel |
 | **Scrib** | Voice typing + cleanup | **Run demo** + hold-to-talk (Speak→Hear→cleanup) |
 | **Brief** | Local-first meeting brain | **Live Meet capture** (no bot) + sample demo → notes → memory |
-| **Simulator** | Adversarial agent stress tests | **Run demo** works (callers → scores → benchmark card) |
+| **Simulator** | Live voice call + adversarial tests | **Live call**, **Persona** (AI customer), versioned **Agents**, **Scenarios**, **Run stress test** |
 
 ## Quick start (≈5 minutes)
 
@@ -53,7 +53,7 @@ API is OpenAI-compatible at `https://api.pyai.com/v1`. See [docs/providers.md](d
 2. **CallIQ** → Run product demo (simulated Meet) or Join Meet as bot (Attendee) → deal notes
 3. **Scrib** → Run demo or Hold to talk → before/after
 4. **Brief** → Capture Meet audio (tab, no bot), or Run sample demo
-5. **Simulator** → Run demo → benchmark card
+5. **Simulator** → Start simulation (allow mic), run a **Persona** scenario, or Run stress test → benchmark card
 6. Open **Runs** / **Playground** / **Providers** (`⌘K`)
 
 Meeting bots: [docs/meeting-bots.md](docs/meeting-bots.md). Google Meet without the extension: [docs/google-meet.md](docs/google-meet.md).
