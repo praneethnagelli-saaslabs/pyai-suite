@@ -30,6 +30,14 @@ describe("extractTranscriptFromUnknown", () => {
   it("returns undefined for empty Attendee transcript", () => {
     expect(extractTranscriptFromUnknown([])).toBeUndefined();
   });
+
+  it("does not wrap OpenAI Speaker A lines as Speaker: Speaker A:", () => {
+    expect(
+      extractTranscriptFromUnknown([
+        { speaker: "Speaker", transcription: { transcript: "Speaker A: we dial on the fly." } },
+      ]),
+    ).toBe("Speaker A: we dial on the fly.");
+  });
 });
 
 describe("mapAttendeeBotStatus", () => {

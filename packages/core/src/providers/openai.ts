@@ -78,7 +78,8 @@ export class OpenAIProvider implements ProviderAdapter {
           format === "mp3" ? "audio/mpeg" : format === "webm" ? "audio/webm" : format === "ogg" || format === "opus" ? "audio/ogg" : "audio/wav";
         const fileBlob = new Blob([toArrayBuffer(req.audio)], { type: mime });
 
-        if (req.diarize) {
+        // gpt-4o-transcribe-diarize is slow on short Meet slices — use whisper-1 there.
+        if (req.diarize && audioLongEnoughForDiarize(req.audio, format)) {
           try {
             return await transcribeDiarized(baseUrl, key!, fileBlob, format);
           } catch (e) {
@@ -97,6 +98,7 @@ export class OpenAIProvider implements ProviderAdapter {
           method: "POST",
           headers: { Authorization: `Bearer ${key}` },
           body: form,
+          signal: AbortSignal.timeout(45_000),
         });
         if (!r.ok) throw new Error(`openai stt ${r.status}: ${await r.text().catch(() => "")}`);
         const data = (await r.json()) as { text: string };
@@ -236,6 +238,12 @@ function toArrayBuffer(audio: Uint8Array | Buffer): ArrayBuffer {
   return audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer;
 }
 
+/** ~10s of 16 kHz mono WAV. Shorter slices use whisper-1 (faster). */
+function audioLongEnoughForDiarize(audio: Uint8Array, format: string): boolean {
+  const min = format === "wav" || format === "pcm" ? 320_000 : 80_000;
+  return audio.byteLength >= min;
+}
+
 async function transcribeDiarized(
   baseUrl: string,
   key: string,
@@ -253,6 +261,7 @@ async function transcribeDiarized(
     method: "POST",
     headers: { Authorization: `Bearer ${key}` },
     body: form,
+    signal: AbortSignal.timeout(75_000),
   });
   if (!r.ok) throw new Error(`openai diarize ${r.status}: ${await r.text().catch(() => "")}`);
 
@@ -299,7 +308,7 @@ function normalizeSpeaker(raw?: string): string {
   if (!raw) return "Speaker";
   const t = raw.trim();
   if (/^speaker\s*\d+$/i.test(t)) return t.replace(/\s+/g, " ");
-  if (/^[A-D]$/i.test(t)) return `Speaker ${t.toUpperCase()}`;
+  if (/^[A-Z]$/i.test(t)) return `Speaker ${t.toUpperCase()}`;
   if (/^SPEAKER_(\d+)$/i.test(t)) {
     const n = Number(t.match(/(\d+)/)?.[1] ?? 0) + 1;
     return `Speaker ${n}`;

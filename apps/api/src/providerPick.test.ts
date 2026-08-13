@@ -1,13 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { Capability, createPlatform } from "@pyai/core";
 import {
   liveCandidates,
   pickProvider,
+  resetSttCooldowns,
   sttFallbackMessage,
   transcribeWithFallback,
 } from "./providerPick.js";
 
 describe("providerPick", () => {
+  beforeEach(() => resetSttCooldowns());
+
   it("orders live STT candidates pyai → openai → gemini", () => {
     expect(liveCandidates()).toEqual(["pyai", "openai", "gemini"]);
     expect(liveCandidates("openai")).toEqual(["openai", "pyai", "gemini"]);
@@ -25,7 +28,12 @@ describe("providerPick", () => {
   });
 
   it("skips unconfigured PyAI/OpenAI and uses mock when allowed", async () => {
-    const platform = createPlatform({ includeMock: true });
+    const platform = createPlatform({
+      includeMock: true,
+      pyai: { apiKey: "" },
+      openai: { apiKey: "" },
+      gemini: { apiKey: "" },
+    });
     const out = await transcribeWithFallback(
       platform,
       { audio: new TextEncoder().encode("dummy"), format: "wav" },
@@ -38,7 +46,12 @@ describe("providerPick", () => {
   });
 
   it("does not use mock for live Scrib audio", async () => {
-    const platform = createPlatform({ includeMock: true });
+    const platform = createPlatform({
+      includeMock: true,
+      pyai: { apiKey: "" },
+      openai: { apiKey: "" },
+      gemini: { apiKey: "" },
+    });
     await expect(
       transcribeWithFallback(
         platform,

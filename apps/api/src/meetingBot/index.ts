@@ -644,7 +644,10 @@ export function extractTranscriptFromUnknown(data: unknown): string | undefined 
           (o.speaker_name as string | undefined) ||
           ((o.participant as { name?: string } | undefined)?.name) ||
           "Speaker";
-        return text ? `${speaker}: ${text}` : "";
+        if (/^(?:Speaker\s+[A-Z0-9]+|Rep|Customer|Me|Them)\s*[:\-]\s+/i.test(text)) {
+          return text.replace(/^\s*Speaker:\s*(?=Speaker\s+[A-Z0-9]+\s*[:\-])/i, "");
+        }
+        return `${speaker}: ${text}`;
       })
       .filter(Boolean);
     return lines.length ? lines.join("\n") : undefined;

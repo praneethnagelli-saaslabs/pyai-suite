@@ -2,6 +2,8 @@ import { api } from "@/lib/api";
 import { audioFileToSttChunks, displayFileName } from "@/lib/audio";
 import { normalizeDiarizedTranscript } from "@/lib/transcript";
 
+const UPLOAD_CONCURRENCY = 2;
+
 export async function transcribeUploadedRecording(
   file: File,
   opts: {
@@ -19,10 +21,26 @@ export async function transcribeUploadedRecording(
     label: `Preparing ${displayFileName(file.name)}…`,
   });
   const chunks = await audioFileToSttChunks(file);
-  const texts: string[] = [];
+  const parts = new Array<string>(chunks.length).fill("");
   let provider = opts.provider ?? "unknown";
+  let done = 0;
+  let cursor = 0;
 
-  for (let i = 0; i < chunks.length; i++) {
+  const emit = () => {
+    const contiguous: string[] = [];
+    for (const p of parts) {
+      if (!p) break;
+      contiguous.push(p);
+    }
+    opts.onPartial?.({
+      text: contiguous.join("\n"),
+      part: done,
+      total: chunks.length,
+      provider,
+    });
+  };
+
+  const runOne = async (i: number) => {
     const chunk = chunks[i]!;
     opts.onProgress?.({
       part: i + 1,
@@ -41,16 +59,23 @@ export async function transcribeUploadedRecording(
     });
     provider = out.provider;
     const t = out.text?.trim();
-    if (t) texts.push(normalizeDiarizedTranscript(t));
-    opts.onPartial?.({
-      text: texts.join("\n"),
-      part: i + 1,
-      total: chunks.length,
-      provider,
-    });
-  }
+    if (t) parts[i] = normalizeDiarizedTranscript(t);
+    done += 1;
+    emit();
+  };
 
-  const text = texts.join("\n");
+  const worker = async () => {
+    while (cursor < chunks.length) {
+      const i = cursor;
+      cursor += 1;
+      await runOne(i);
+    }
+  };
+
+  const n = Math.min(UPLOAD_CONCURRENCY, chunks.length);
+  await Promise.all(Array.from({ length: n }, () => worker()));
+
+  const text = parts.filter(Boolean).join("\n");
   if (!text) throw new Error("No speech detected in that recording.");
   return { text, provider, parts: chunks.length };
 }

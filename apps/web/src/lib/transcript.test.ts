@@ -31,6 +31,24 @@ describe("parseTranscript", () => {
     expect(n).toContain("Speaker 2: take care");
     expect(n).toMatch(/Speaker 1: no the thank you okay bye bye/);
   });
+
+  it("splits OpenAI diarize Speaker A/B/C instead of wrapping as Speaker:", () => {
+    const raw = [
+      "Speaker: Speaker A: we dial from a local number. Speaker A: then we check the state.",
+      "Speaker B: do we do it on the fly?",
+      "Speaker C: Yeah, Pranit, how do we identify nearest dial codes?",
+      "Speaker A: we do it on the fly but it is cached.",
+    ].join(" ");
+    const n = normalizeDiarizedTranscript(raw);
+    expect(n).not.toMatch(/^Speaker: Speaker A:/m);
+    expect(n).toContain("Speaker A:");
+    expect(n).toContain("Speaker B:");
+    expect(n).toContain("Speaker C:");
+    const u = parseTranscript(n);
+    expect(u.map((x) => x.speaker)).toEqual(["Speaker A", "Speaker B", "Speaker C", "Speaker A"]);
+    expect(u[1]?.text).toMatch(/on the fly/i);
+    expect(u[0]?.text).not.toMatch(/^Speaker A:/);
+  });
 });
 
 describe("conversationIntel", () => {

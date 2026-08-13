@@ -527,7 +527,11 @@ export function BriefPage() {
         if (last && last === line.toLowerCase()) return prev;
         return prev.trim() ? `${prev.trim()}\n${line}` : line;
       });
-      setCaptureNote(`Live STT via ${out.provider} · ${speakerLabel}: (Me/Them)…`);
+      setCaptureNote(
+        out.fallback
+          ? `Live STT via ${out.provider} (Hear skipped) · ${speakerLabel}`
+          : `Live STT via ${out.provider} · ${speakerLabel}: (Me/Them)…`,
+      );
       setError(null);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

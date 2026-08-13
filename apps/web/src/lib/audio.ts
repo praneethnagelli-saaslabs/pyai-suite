@@ -125,8 +125,8 @@ async function blobToWav(blob: Blob): Promise<ArrayBuffer> {
 }
 
 const STT_RATE = 16_000;
-/** ~2 min of 16 kHz mono WAV — short enough for sync Hear under the proxy wait. */
-const STT_CHUNK_SECONDS = 120;
+/** ~1 min of 16 kHz mono WAV — first OpenAI part returns sooner; diarize stays usable. */
+const STT_CHUNK_SECONDS = 60;
 const DIRECT_SEND_MAX_BYTES = 10 * 1024 * 1024;
 
 function resampleMono(buffer: AudioBuffer, targetRate: number): Float32Array {
