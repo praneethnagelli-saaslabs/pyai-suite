@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "PyAI Suite",
+  "version": "0.4.0",
+  "description": "CallIQ bot join, Brief Meet capture, Scrib dictation. Secrets never touch content scripts.",
+  "permissions": ["activeTab", "storage", "scripting", "tabs"],
+  "host_permissions": [
+    "http://localhost:4000/*",
+    "http://127.0.0.1:4000/*",
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3000/*",
+    "https://meet.google.com/*",
+    "https://*.zoom.us/*",
+    "https://teams.microsoft.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "PyAI Suite",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "commands": {
+    "dictate": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Space",
+        "mac": "Command+Shift+Space"
+      },
+      "description": "Start / stop Scrib dictation"
+    }
+  }
+}

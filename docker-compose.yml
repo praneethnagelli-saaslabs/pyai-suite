@@ -1,0 +1,297 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pyai
+      POSTGRES_PASSWORD: pyai
+      POSTGRES_DB: pyai_suite
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pyai -d pyai_suite"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Create buckets for suite + Attendee recordings (S3-compatible MinIO)
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $${MINIO_ACCESS_KEY:-minioadmin} $${MINIO_SECRET_KEY:-minioadmin};
+      mc mb --ignore-existing local/$${MINIO_BUCKET:-pyai-suite};
+      mc mb --ignore-existing local/$${AWS_RECORDING_STORAGE_BUCKET_NAME:-attendee-recordings};
+      exit 0;
+      "
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-pyai-suite}
+      AWS_RECORDING_STORAGE_BUCKET_NAME: ${AWS_RECORDING_STORAGE_BUCKET_NAME:-attendee-recordings}
+    restart: "no"
+
+  # ---- Attendee (CallIQ meeting bots) — always on with the suite ----
+  attendee-postgres:
+    image: postgres:15.3-alpine
+    environment:
+      POSTGRES_DB: attendee_development
+      POSTGRES_USER: attendee_development_user
+      POSTGRES_PASSWORD: attendee_development_user
+      PGDATA: /data/postgres
+    volumes:
+      - attendee_pgdata:/data/postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U attendee_development_user -d attendee_development"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  attendee-redis:
+    image: redis:7-alpine
+    volumes:
+      - attendee_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # Attendee image runs as uid 1000 (`app`); named volumes are root-owned.
+  attendee-key-init:
+    image: busybox:1.37
+    user: "0:0"
+    volumes:
+      - attendee_bootstrap:/shared
+    command:
+      - sh
+      - -c
+      - mkdir -p /shared && chown -R 1000:1000 /shared && chmod 700 /shared
+    restart: "no"
+
+  attendee-app:
+    platform: linux/amd64
+    build:
+      context: https://github.com/attendee-labs/attendee.git#main
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: attendee-postgres
+      POSTGRES_PORT: "5432"
+      REDIS_URL: redis://attendee-redis:6379/5
+      DJANGO_SETTINGS_MODULE: attendee.settings.development
+      DJANGO_SECRET_KEY: ${ATTENDEE_DJANGO_SECRET_KEY:-dev-only-attendee-django-secret-change-me}
+      CREDENTIALS_ENCRYPTION_KEY: ${ATTENDEE_CREDENTIALS_ENCRYPTION_KEY:-8h7yMgt2CB87fCu_nRsv2g1e-7OS1WoCGGFVkDIPbRs=}
+      # Compose service hostname must be allowed (API calls http://attendee-app:8000)
+      ALLOWED_HOSTS: ${ATTENDEE_ALLOWED_HOSTS:-localhost,127.0.0.1,attendee-app}
+      # MinIO (S3-compatible) — not AWS cloud
+      AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-http://minio:9000}
+      AWS_RECORDING_STORAGE_BUCKET_NAME: ${AWS_RECORDING_STORAGE_BUCKET_NAME:-attendee-recordings}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-${MINIO_ACCESS_KEY:-minioadmin}}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-${MINIO_SECRET_KEY:-minioadmin}}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      ATTENDEE_BOOTSTRAP_EMAIL: ${ATTENDEE_BOOTSTRAP_EMAIL:-calliq@local.test}
+      ATTENDEE_BOOTSTRAP_PASSWORD: ${ATTENDEE_BOOTSTRAP_PASSWORD:-pyai-local-dev-only}
+      ATTENDEE_SKIP_BOOTSTRAP: ${ATTENDEE_SKIP_BOOTSTRAP:-}
+    entrypoint: []
+    volumes:
+      - attendee_bootstrap:/shared
+      - ./infrastructure/docker/attendee-bootstrap.py:/bootstrap.py:ro
+    command:
+      - bash
+      - -lc
+      - |
+        set -e
+        python manage.py migrate --noinput
+        PYTHONPATH="/attendee:${PYTHONPATH:-}" python /bootstrap.py
+        python manage.py runserver 0.0.0.0:8000
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/', timeout=3)\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 24
+      start_period: 90s
+    depends_on:
+      attendee-postgres:
+        condition: service_healthy
+      attendee-redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      attendee-key-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  attendee-worker:
+    platform: linux/amd64
+    build:
+      context: https://github.com/attendee-labs/attendee.git#main
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: attendee-postgres
+      REDIS_URL: redis://attendee-redis:6379/5
+      DJANGO_SETTINGS_MODULE: attendee.settings.development
+      ENABLE_CHROME_SANDBOX: "false"
+      DJANGO_SECRET_KEY: ${ATTENDEE_DJANGO_SECRET_KEY:-dev-only-attendee-django-secret-change-me}
+      CREDENTIALS_ENCRYPTION_KEY: ${ATTENDEE_CREDENTIALS_ENCRYPTION_KEY:-8h7yMgt2CB87fCu_nRsv2g1e-7OS1WoCGGFVkDIPbRs=}
+      AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-http://minio:9000}
+      AWS_RECORDING_STORAGE_BUCKET_NAME: ${AWS_RECORDING_STORAGE_BUCKET_NAME:-attendee-recordings}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-${MINIO_ACCESS_KEY:-minioadmin}}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-${MINIO_SECRET_KEY:-minioadmin}}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+    command: celery -A attendee worker -l INFO
+    depends_on:
+      attendee-postgres:
+        condition: service_healthy
+      attendee-redis:
+        condition: service_healthy
+      attendee-app:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    shm_size: "2gb"
+
+  attendee-scheduler:
+    platform: linux/amd64
+    build:
+      context: https://github.com/attendee-labs/attendee.git#main
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: attendee-postgres
+      REDIS_URL: redis://attendee-redis:6379/5
+      DJANGO_SETTINGS_MODULE: attendee.settings.development
+      DJANGO_SECRET_KEY: ${ATTENDEE_DJANGO_SECRET_KEY:-dev-only-attendee-django-secret-change-me}
+      CREDENTIALS_ENCRYPTION_KEY: ${ATTENDEE_CREDENTIALS_ENCRYPTION_KEY:-8h7yMgt2CB87fCu_nRsv2g1e-7OS1WoCGGFVkDIPbRs=}
+    entrypoint: []
+    command: python manage.py run_scheduler
+    depends_on:
+      attendee-postgres:
+        condition: service_healthy
+      attendee-redis:
+        condition: service_healthy
+      attendee-app:
+        condition: service_healthy
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile
+      target: api
+    env_file:
+      - .env
+    environment:
+      API_PORT: 4000
+      API_HOST: 0.0.0.0
+      DATABASE_URL: postgres://pyai:pyai@postgres:5432/pyai_suite
+      REDIS_URL: redis://redis:6379
+      JOBS_BACKEND: redis
+      MINIO_ENDPOINT: minio:9000
+      ATTENDEE_BASE_URL: ${ATTENDEE_BASE_URL:-http://attendee-app:8000}
+      ATTENDEE_API_KEY: ${ATTENDEE_API_KEY:-}
+    volumes:
+      - attendee_bootstrap:/shared:ro
+      - ./infrastructure/docker/api-load-attendee-key.sh:/api-load-attendee-key.sh:ro
+    entrypoint: ["/bin/sh", "/api-load-attendee-key.sh"]
+    # Compose entrypoint overrides clear the image CMD — keep the API process explicit.
+    command: ["pnpm", "--filter", "@pyai/api", "start"]
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      attendee-app:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile
+      target: worker
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://pyai:pyai@postgres:5432/pyai_suite
+      REDIS_URL: redis://redis:6379
+      JOBS_BACKEND: redis
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile
+      target: web
+    ports:
+      - "3000:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  miniodata:
+  attendee_pgdata:
+  attendee_redis:
+  attendee_bootstrap:

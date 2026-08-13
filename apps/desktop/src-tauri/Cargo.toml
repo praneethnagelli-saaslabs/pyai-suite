@@ -1,0 +1,14 @@
+[package]
+name = "pyai-desktop"
+version = "0.1.0"
+description = "PyAI Suite desktop shell (WhisperFlow + OpenGranola)"
+edition = "2021"
+license = "MIT"
+
+# Minimal bin so `cargo run` works without the full Tauri toolchain.
+# For the real shell: add tauri 2 + tauri-build, then `cargo tauri dev`
+# (see tauri.conf.json and bridge.ts invoke names).
+
+[[bin]]
+name = "pyai-desktop"
+path = "src/main.rs"

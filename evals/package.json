@@ -1,0 +1,26 @@
+{
+  "name": "@pyai/evals",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "eval": "tsx run.ts",
+    "test": "tsx run.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "echo 'evals runner'",
+    "clean": "rm -rf .turbo"
+  },
+  "dependencies": {
+    "@pyai/core": "workspace:*",
+    "@pyai/calliq": "workspace:*",
+    "@pyai/brief": "workspace:*",
+    "@pyai/simulator": "workspace:*",
+    "@pyai/scrib": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

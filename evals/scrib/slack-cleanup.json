@@ -1,0 +1,13 @@
+{
+  "name": "Filler-heavy Slack dictation",
+  "input": {
+    "rawText": "hey can you like uh send this to the team tomorrow",
+    "appName": "Slack",
+    "mode": "concise"
+  },
+  "expected": {
+    "mustNotContain": ["uh", "like"],
+    "mustContain": ["team", "tomorrow"]
+  },
+  "criteria": ["intent_preserved", "latency_hud"]
+}

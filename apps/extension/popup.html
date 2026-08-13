@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>PyAI Suite</title>
+    <style>
+      body { font: 13px/1.4 system-ui, sans-serif; margin: 12px; width: 300px; color: #111b26; }
+      button { width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: #0d9488; color: #fff; font-weight: 600; cursor: pointer; margin-top: 6px; }
+      button.secondary { background: #1e3a4c; }
+      button.rec { background: #b42318; }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      textarea { width: 100%; min-height: 72px; margin: 8px 0; box-sizing: border-box; }
+      .hint { color: #6b8199; font-size: 11px; margin-top: 8px; }
+      code { font-family: ui-monospace, monospace; font-size: 11px; }
+      #status { font-size: 11px; color: #0d9488; min-height: 1.2em; }
+      hr { border: 0; border-top: 1px solid #e5eaf0; margin: 12px 0; }
+      .meet { font-size: 11px; color: #6b8199; word-break: break-all; }
+    </style>
+  </head>
+  <body>
+    <strong>PyAI Suite</strong>
+    <div id="status"></div>
+
+    <button id="start-with-bot">Start call with CallIQ Bot</button>
+    <button id="calliq" class="secondary" disabled>Bring bot into this Meet</button>
+    <p id="meet-url" class="meet"></p>
+
+    <hr />
+    <div style="font-size:11px;font-weight:600;margin-bottom:4px">Brief (no bot)</div>
+    <button id="brief-open" class="secondary">Open Meet + Brief</button>
+    <button id="brief-capture" class="secondary" disabled>Capture this Meet in Brief</button>
+
+    <hr />
+    <div style="font-size:11px;font-weight:600;margin-bottom:4px">Scrib dictation</div>
+    <textarea id="raw" placeholder="Speak… or paste raw transcript"></textarea>
+    <button id="mic" class="secondary">Hold to record (mic)</button>
+    <button id="go">Clean + insert</button>
+    <p class="hint">
+      <strong>CallIQ</strong> sends a bot. <strong>Brief</strong> opens Meet + notes (you capture tab audio).
+      Reload the extension after updates. Keys stay on <code>localhost:4000</code>.
+    </p>
+    <script src="popup.js"></script>
+  </body>
+</html>

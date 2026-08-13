@@ -1,0 +1,12 @@
+{
+  "name": "Slack-style fillers",
+  "input": {
+    "rawText": "um so like can we sync tomorrow about the nestjs thing",
+    "mode": "light",
+    "appName": "Slack"
+  },
+  "expected": {
+    "mustNotContain": ["um", "like"],
+    "mustContain": ["sync", "tomorrow"]
+  }
+}

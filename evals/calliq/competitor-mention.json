@@ -1,0 +1,9 @@
+{
+  "name": "Competitor mention",
+  "input": {
+    "transcriptText": "Sales Rep: How does this compare to Chorus?\nCustomer: Chorus is expensive and we need something lighter.\nSales Rep: Understood — our deal health and evidence trail cover the core use case."
+  },
+  "expected": {
+    "mustMention": ["competitor"]
+  }
+}

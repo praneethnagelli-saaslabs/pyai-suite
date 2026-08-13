@@ -1,0 +1,12 @@
+{
+  "name": "Launch date decision",
+  "input": {
+    "mode": "Planning",
+    "transcriptText": "Me: We will launch in July.\nThem: Launch moved to August.\nMe: Them owns the security pack by Friday."
+  },
+  "expected": {
+    "decisionContains": ["August"],
+    "actionOwnerContains": ["Jordan"]
+  },
+  "criteria": ["evidence_present", "privacy_local"]
+}

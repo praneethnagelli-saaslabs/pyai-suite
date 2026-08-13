@@ -1,0 +1,11 @@
+{
+  "name": "Pricing objection sales call",
+  "input": {
+    "transcriptText": "Sales Rep: Thanks for hopping on.\nCustomer: The implementation cost is the main blocker.\nSales Rep: We do white-glove onboarding in under four weeks.\nCustomer: If you send the security pack we can get a decision maker by end of month."
+  },
+  "expected": {
+    "mustMention": ["implementation", "security"],
+    "minDealHealth": 40
+  },
+  "criteria": ["evidence_present", "schema_valid"]
+}

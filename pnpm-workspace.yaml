@@ -1,0 +1,12 @@
+packages:
+  - "packages/*"
+  - "apps/*"
+  - "products/*"
+  - "tools/*"
+  - "evals"
+
+onlyBuiltDependencies:
+  - esbuild
+  - "@biomejs/biome"
+
+dangerouslyAllowAllBuilds: true

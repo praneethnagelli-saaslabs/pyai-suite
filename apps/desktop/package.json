@@ -1,0 +1,24 @@
+{
+  "name": "@pyai/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Tauri desktop shell for Scrib + Brief (hotkeys, audio capture, secure storage).",
+  "scripts": {
+    "dev": "echo 'Install Rust + Tauri CLI, then: cargo tauri dev (see README)'",
+    "build": "echo 'Desktop scaffold — run cargo tauri build when Rust toolchain is available'",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "biome check src",
+    "test": "vitest run",
+    "clean": "rm -rf dist .turbo *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@pyai/scrib": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

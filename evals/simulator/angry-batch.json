@@ -1,0 +1,13 @@
+{
+  "name": "Angry customer batch",
+  "input": {
+    "personaId": "angry_customer",
+    "count": 5,
+    "concurrency": 5
+  },
+  "expected": {
+    "minPassRate": 0.4,
+    "mustProduceCard": true
+  },
+  "criteria": ["scorecard", "replayable_failures"]
+}
