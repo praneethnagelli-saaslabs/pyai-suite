@@ -212,10 +212,43 @@ async function runInsert(tabId, text, world) {
       func: (value) => globalThis.__pyaiInsertText?.(value) ?? { ok: false },
       args: [text],
     });
-    return Boolean(results?.some((r) => r.result?.ok && r.result?.via !== "dedupe"));
+    const hit = results?.find((r) => r.result?.ok && r.result?.via !== "dedupe");
+    return hit?.result ?? { ok: false };
   };
 
-  return withTimeout(attempt(), 2500, false);
+  return withTimeout(attempt(), 2500, { ok: false });
+}
+
+/**
+ * Trusted caret insert via CDP. Works in Google Docs, Monaco, Ace, and most
+ * web IDEs because the event is privileged — unlike fake DOM textInput.
+ * Attaches only for this call, then detaches. Never reads the page or network.
+ */
+async function trustedType(tabId, text) {
+  if (!text || tabId == null) return false;
+  const target = { tabId };
+  let attached = false;
+  try {
+    await chrome.debugger.attach(target, "1.3");
+    attached = true;
+  } catch (e) {
+    const msg = String(e?.message || e);
+    if (!/already attached/i.test(msg)) return false;
+  }
+  try {
+    await chrome.debugger.sendCommand(target, "Input.insertText", { text });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (attached) {
+      await chrome.debugger.detach(target).catch(() => undefined);
+    }
+  }
+}
+
+function trustDomInsert(via) {
+  return via === "field" || via === "code";
 }
 
 async function writeClipboard(text) {
@@ -240,29 +273,44 @@ async function insertIntoActiveTab(text) {
 
   const copied = await writeClipboard(text);
 
+  let dom = { ok: false, via: "" };
   try {
-    if (await runInsert(tab.id, text, "MAIN")) return { ok: true };
+    const main = await runInsert(tab.id, text, "MAIN");
+    if (main?.ok) dom = main;
   } catch {
     /* isolated world next */
   }
-  try {
-    if (await runInsert(tab.id, text, "ISOLATED")) return { ok: true };
-  } catch {
-    /* message next */
+  if (!dom.ok) {
+    try {
+      const iso = await runInsert(tab.id, text, "ISOLATED");
+      if (iso?.ok) dom = iso;
+    } catch {
+      /* message next */
+    }
+  }
+  if (!dom.ok) {
+    try {
+      await injectScrib(tab.id);
+      const sent = await withTimeout(
+        chrome.tabs.sendMessage(tab.id, { type: "scrib.insert", text }),
+        1500,
+        null,
+      );
+      if (sent?.ok) dom = { ok: true, via: "message" };
+    } catch {
+      /* ignore */
+    }
   }
 
+  if (dom.ok && trustDomInsert(dom.via)) return { ok: true };
+
   try {
-    await injectScrib(tab.id);
-    const sent = await withTimeout(
-      chrome.tabs.sendMessage(tab.id, { type: "scrib.insert", text }),
-      1500,
-      null,
-    );
-    if (sent?.ok) return { ok: true };
+    if (await trustedType(tab.id, text)) return { ok: true, via: "trusted" };
   } catch {
-    /* ignore */
+    /* clipboard fallback */
   }
 
+  if (dom.ok) return { ok: true };
   if (copied) return { ok: false, reason: "Copied — click the field and press ⌘V." };
   throw new Error("Click in the field, then try again.");
 }

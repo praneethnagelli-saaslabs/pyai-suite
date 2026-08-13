@@ -20,11 +20,14 @@ The extension only hands Brief the Meet URL. Capture stays in the app (tab audio
 
 ## Scrib dictation
 
-Hold **Control+Shift+1** (Control ⌃, not ⌘), speak, **release** to paste at the caret. Or hold **Hold to talk** in the popup. Allow the microphone once if Chrome asks. The toolbar badge shows **ON** while you hold. Chrome’s own pages (`chrome://`) copy text for ⌘V. Re-assign the key under `chrome://extensions/shortcuts` after reload.
+Hold **Control+Shift+1** (Control ⌃, not ⌘), speak, **release** to paste at the caret. Or hold **Hold to talk** in the popup. Allow the microphone once if Chrome asks. The toolbar badge shows **ON** while you hold.
+
+On Google Docs and stubborn web IDEs, Scrib types with a **trusted** insert (Chrome may flash a brief “debugging this tab” bar — it detaches immediately). Text is always copied too, so **⌘V** still works. Chrome’s own pages (`chrome://`) are clipboard-only. Re-assign the key under `chrome://extensions/shortcuts` after reload.
 
 ## Security
 
 - Content script: DOM insert + page bridge only
+- Trusted paste uses `debugger` only for `Input.insertText`, then detaches (no network/DOM read)
 - Background talks to `localhost:4000` / opens `localhost:3000`
 - Provider keys stay in API `.env`
 
