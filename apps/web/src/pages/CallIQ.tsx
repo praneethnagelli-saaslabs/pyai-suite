@@ -84,6 +84,7 @@ export function CallIQPage() {
   const [workingCallId, setWorkingCallId] = useState<string | null>(null);
 
   const pollAbort = useRef(false);
+  const joinInFlight = useRef(false);
   const audioCtx = useRef<AudioContext | null>(null);
   const demoAudio = useRef<HTMLAudioElement | null>(null);
   const demoObjectUrl = useRef<string | null>(null);
@@ -599,11 +600,18 @@ export function CallIQPage() {
     let leftAt: number | null = null;
     let lastText = "";
     let openedTranscript = false;
+    let joiningPolls = 0;
     while (!pollAbort.current) {
       const st = await api.calliqBotStatus(botId);
-      setBotNote(`${st.status}${st.detail ? ` · ${st.detail}` : ""}`);
       const hasLines = Boolean(st.transcriptText?.trim());
       const inMeeting = st.status === "joining" || st.status === "in_call";
+      if (st.status === "joining") joiningPolls += 1;
+      else joiningPolls = 0;
+      setBotNote(
+        joiningPolls >= 20
+          ? "Google is blocking the guest bot (“You can’t join this video call”). Start a new Meet, allow anyone with the link, admit CallIQ Bot once, then speak."
+          : `${st.status}${st.detail ? ` · ${st.detail}` : ""}`,
+      );
       const botLeft =
         st.status === "waiting_transcript" || st.status === "done" || st.status === "failed";
       if (inMeeting) leftAt = null;
@@ -713,6 +721,7 @@ export function CallIQPage() {
   }
 
   async function joinBot(urlOverride?: string) {
+    if (joinInFlight.current) return;
     const raw = (urlOverride ?? meetUrl).trim();
     const url = extractMeetingUrl(raw) ?? raw;
     if (!isUsableMeetingUrl(url)) {
@@ -721,6 +730,7 @@ export function CallIQPage() {
       setShowManualLink(true);
       return;
     }
+    joinInFlight.current = true;
     setMeetUrl(url);
     const draft = createDraft("meet", {
       status: "recording",
@@ -759,6 +769,7 @@ export function CallIQPage() {
       setPipelineActive(null);
       setPipelineDone([]);
     } finally {
+      joinInFlight.current = false;
       setBotBusy(false);
       setBotSessionId(null);
       setLeavingBot(false);
@@ -1000,8 +1011,9 @@ export function CallIQPage() {
             ) : null}
             {botNote ? <p className="text-xs text-ink-500">{botNote}</p> : null}
             <p className="text-[11px] text-ink-400">
-              Admit <span className="font-medium text-ink-600">CallIQ Bot</span> from the waiting room. Captions
-              stream live on the Transcript tab. After the bot leaves, Recap runs — or use Finish & analyze.
+              Admit <span className="font-medium text-ink-600">one</span> CallIQ Bot. If two knock, admit one and
+              deny the other — two bots in the same Meet breaks captions. Host: allow guests. If Google blocks the
+              guest, start a <span className="font-medium text-ink-600">new Meet</span> and send the bot once.
             </p>
           </div>
 

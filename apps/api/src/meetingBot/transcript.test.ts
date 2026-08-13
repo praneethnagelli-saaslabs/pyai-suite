@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { extractTranscriptFromUnknown, mapAttendeeBotStatus } from "./index.js";
+import {
+  attendeeCreatePayload,
+  extractTranscriptFromUnknown,
+  mapAttendeeBotStatus,
+  meetingDedupKey,
+} from "./index.js";
 
 describe("extractTranscriptFromUnknown", () => {
   it("parses Attendee utterance shape", () => {
@@ -68,6 +73,31 @@ describe("mapAttendeeBotStatus", () => {
     });
     expect(mapped.status).toBe("waiting_transcript");
     expect(mapped.leftMeet).toBe(true);
+  });
+
+  it("does not force Meet caption language (avoids ui_element_not_found)", () => {
+    const body = attendeeCreatePayload("https://meet.google.com/abc-defg-hij", "CallIQ Bot");
+    const captions = (body.transcription_settings as { meeting_closed_captions: Record<string, unknown> })
+      .meeting_closed_captions;
+    expect(captions.google_meet_language).toBeUndefined();
+    expect((body.google_meet_settings as { ui_interaction_mode: string }).ui_interaction_mode).toBe("robotic");
+  });
+
+  it("uses one dedup key per Meet so a second Send Bot does not spawn another guest", () => {
+    expect(meetingDedupKey("https://meet.google.com/abc-defg-hij?authuser=0")).toBe(
+      "calliq-meet-abc-defg-hij",
+    );
+    const body = attendeeCreatePayload("https://meet.google.com/abc-defg-hij", "CallIQ Bot");
+    expect(body.deduplication_key).toBe("calliq-meet-abc-defg-hij");
+  });
+
+  it("explains ui_element_not_found instead of echoing the raw code", () => {
+    const mapped = mapAttendeeBotStatus({
+      state: "fatal_error",
+      events: [{ type: "fatal_error", sub_type: "ui_element_not_found" }],
+    });
+    expect(mapped.status).toBe("failed");
+    expect(mapped.error).toMatch(/admit CallIQ Bot/i);
   });
 
   it("parses Attendee transcription as a plain string", () => {

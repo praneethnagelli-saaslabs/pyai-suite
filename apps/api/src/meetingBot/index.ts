@@ -98,6 +98,54 @@ function attendeeBase(): string {
   return (env("ATTENDEE_BASE_URL") ?? "http://localhost:8000").replace(/\/$/, "");
 }
 
+function attendeeHeaders(): Record<string, string> {
+  const key = env("ATTENDEE_API_KEY");
+  if (!key) throw new Error("ATTENDEE_API_KEY not set");
+  return { Authorization: `Token ${key}`, "Content-Type": "application/json" };
+}
+
+/** Stable key so a second Send Bot on the same Meet reuses the live bot instead of spawning another guest. */
+export function meetingDedupKey(meetingUrl: string): string {
+  const lower = meetingUrl.trim().toLowerCase();
+  const meet = lower.match(/meet\.google\.com\/([a-z0-9]{3}-[a-z0-9]{4}-[a-z0-9]{3})/);
+  if (meet) return `calliq-meet-${meet[1]}`;
+  const zoom = lower.match(/zoom\.us\/j\/(\d+)/);
+  if (zoom) return `calliq-zoom-${zoom[1]}`;
+  const teams = lower.match(/meetup-join\/([^/?#]+)/)?.[1];
+  if (teams) return `calliq-teams-${teams.slice(0, 48)}`;
+  return `calliq-${lower.replace(/https?:\/\//, "").replace(/[^a-z0-9]+/g, "-").slice(0, 64)}`;
+}
+
+export function sameMeetingUrl(a: string, b: string): boolean {
+  return meetingDedupKey(a) === meetingDedupKey(b);
+}
+
+type AttendeeBotRow = {
+  id: string;
+  meeting_url?: string;
+  state?: string;
+  deduplication_key?: string | null;
+};
+
+const ATTENDEE_ACTIVE_JOIN_STATES = new Set([
+  "joining",
+  "waiting_room",
+  "staged",
+  "ready",
+  "scheduled",
+  "joined_recording",
+  "joined_not_recording",
+  "joined_recording_paused",
+  "joined_recording_permission_denied",
+  "connected",
+  "joining_breakout_room",
+  "leaving_breakout_room",
+]);
+
+function isActiveJoinState(state: string | undefined): boolean {
+  return ATTENDEE_ACTIVE_JOIN_STATES.has(normalizeAttendeeState(state ?? ""));
+}
+
 async function recallCreate(meetingUrl: string, botName: string): Promise<{ id: string; raw: unknown }> {
   const key = env("RECALL_API_KEY");
   if (!key) throw new Error("RECALL_API_KEY not set");
@@ -188,21 +236,25 @@ function summarizeHttpError(status: number, text: string): string {
   return `${status}: ${trimmed.slice(0, 180).replace(/\s+/g, " ")}`;
 }
 
+function meetingClosedCaptionSettings(meetingUrl: string): Record<string, unknown> {
+  // Do not set google_meet_language — Attendee then clicks Meet Settings to
+  // change caption language and fatals with ui_element_not_found when the
+  // menu is missing (non-English UI, waiting room, or Meet layout change).
+  if (/zoom\.us/i.test(meetingUrl)) {
+    return { meeting_closed_captions: { zoom_language: "English", merge_consecutive_captions: true } };
+  }
+  if (/teams\.microsoft\.com|teams\.live\.com/i.test(meetingUrl)) {
+    return { meeting_closed_captions: { teams_language: "en-us", merge_consecutive_captions: true } };
+  }
+  return { meeting_closed_captions: { merge_consecutive_captions: true } };
+}
+
 export function attendeeCreatePayload(meetingUrl: string, botName: string): Record<string, unknown> {
   const aloneAfter = Number(env("ATTENDEE_ALONE_TIMEOUT_SECONDS") || "20");
-  const captionLang = env("ATTENDEE_CAPTION_LANGUAGE") || "en-US";
-  return {
+  const payload: Record<string, unknown> = {
     meeting_url: meetingUrl,
     bot_name: botName,
-    // Live captions from Meet/Zoom/Teams (no extra STT key). Poll /transcript during the call.
-    transcription_settings: {
-      meeting_closed_captions: {
-        google_meet_language: captionLang,
-        zoom_language: "English",
-        teams_language: "en-us",
-        merge_consecutive_captions: true,
-      },
-    },
+    transcription_settings: meetingClosedCaptionSettings(meetingUrl),
     recording_settings: { format: "mp3" },
     automatic_leave_settings: {
       only_participant_in_meeting_timeout_seconds: Number.isFinite(aloneAfter) ? aloneAfter : 20,
@@ -211,17 +263,79 @@ export function attendeeCreatePayload(meetingUrl: string, botName: string): Reco
       silence_activate_after_seconds: 120,
     },
   };
+  if (/meet\.google\.com/i.test(meetingUrl)) {
+    payload.google_meet_settings = {
+      use_login: false,
+      ui_interaction_mode: "robotic",
+    };
+  }
+  payload.deduplication_key = meetingDedupKey(meetingUrl);
+  return payload;
+}
+
+async function attendeeListBots(query: Record<string, string> = {}): Promise<AttendeeBotRow[]> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(query)) {
+    if (v) qs.set(k, v);
+  }
+  const suffix = qs.size ? `?${qs.toString()}` : "";
+  const r = await fetch(`${attendeeBase()}/api/v1/bots${suffix}`, { headers: attendeeHeaders() });
+  const text = await r.text();
+  if (!r.ok) return [];
+  try {
+    const raw = JSON.parse(text) as unknown;
+    if (Array.isArray(raw)) return raw as AttendeeBotRow[];
+    if (raw && typeof raw === "object" && Array.isArray((raw as { results?: unknown }).results)) {
+      return (raw as { results: AttendeeBotRow[] }).results;
+    }
+  } catch {
+    /* ignore */
+  }
+  return [];
+}
+
+async function findActiveAttendeeBots(meetingUrl: string): Promise<AttendeeBotRow[]> {
+  const key = meetingDedupKey(meetingUrl);
+  const [byKey, byUrl, recent] = await Promise.all([
+    attendeeListBots({ deduplication_key: key }),
+    attendeeListBots({ meeting_url: meetingUrl }),
+    attendeeListBots({}),
+  ]);
+  const seen = new Map<string, AttendeeBotRow>();
+  for (const row of [...byKey, ...byUrl, ...recent]) {
+    if (!row?.id) continue;
+    const url = typeof row.meeting_url === "string" ? row.meeting_url : "";
+    const matches =
+      row.deduplication_key === key || (url ? sameMeetingUrl(url, meetingUrl) : false);
+    if (!matches) continue;
+    if (!isActiveJoinState(row.state)) continue;
+    seen.set(row.id, row);
+  }
+  return [...seen.values()];
+}
+
+/** Keep one live bot for this Meet; tell extras to leave so Admit does not let two guests in. */
+async function keepOneActiveAttendeeBot(meetingUrl: string): Promise<AttendeeBotRow | undefined> {
+  const active = await findActiveAttendeeBots(meetingUrl);
+  if (!active.length) return undefined;
+  const [keep, ...extras] = active;
+  await Promise.all(extras.map((row) => attendeeLeave(row.id).catch(() => undefined)));
+  return keep;
+}
+
+function findLocalActiveSession(meetingUrl: string): BotSession | undefined {
+  for (const session of sessions.values()) {
+    if (session.provider !== "attendee") continue;
+    if (!sameMeetingUrl(session.meetingUrl, meetingUrl)) continue;
+    if (session.status === "joining" || session.status === "in_call") return session;
+  }
+  return undefined;
 }
 
 async function attendeeCreate(meetingUrl: string, botName: string): Promise<{ id: string; raw: unknown }> {
-  const key = env("ATTENDEE_API_KEY");
-  if (!key) throw new Error("ATTENDEE_API_KEY not set");
   const r = await fetch(`${attendeeBase()}/api/v1/bots`, {
     method: "POST",
-    headers: {
-      Authorization: `Token ${key}`,
-      "Content-Type": "application/json",
-    },
+    headers: attendeeHeaders(),
     body: JSON.stringify(attendeeCreatePayload(meetingUrl, botName)),
   });
   const text = await r.text();
@@ -307,7 +421,10 @@ export function mapAttendeeBotStatus(input: {
   const label = lastEventLabel || state || "unknown";
 
   if (state === "fatal_error" || state.includes("fatal")) {
-    return { status: "failed", error: label, detail: label, leftMeet: true };
+    const error = /ui_element_not_found/i.test(label)
+      ? "Google Meet UI element not found (join, name, or captions). Use a live meet.google.com/xxx-xxxx-xxx link, admit CallIQ Bot immediately, keep Meet in English, then try again."
+      : label;
+    return { status: "failed", error, detail: label, leftMeet: true };
   }
 
   const leftMeet = ATTENDEE_LEFT_STATES.has(state) || eventsIndicateBotLeft(events);
@@ -340,7 +457,10 @@ export function mapAttendeeBotStatus(input: {
   return {
     status: "joining",
     transcriptText,
-    detail: label || "joining",
+    detail:
+      label && label !== "joining" && label !== "join_requested"
+        ? label
+        : "joining — admit CallIQ Bot. If Meet says “You can’t join this video call”, Google blocked the guest: start a new Meet, allow anyone with the link, send the bot once.",
     leftMeet: false,
   };
 }
@@ -611,7 +731,50 @@ export async function joinMeetingBot(input: JoinBotInput): Promise<BotSession> {
           "Paste a real Meet/Zoom link (e.g. https://meet.google.com/abc-defg-hij). Attendee joins an existing meeting — it does not create Google Meet rooms.",
         );
       }
-      const created = await attendeeCreate(meetingUrl, botName);
+      const local = findLocalActiveSession(meetingUrl);
+      if (local) return local;
+      const existing = await keepOneActiveAttendeeBot(meetingUrl);
+      if (existing) {
+        const session: BotSession = {
+          id,
+          provider: "attendee",
+          externalId: existing.id,
+          meetingUrl,
+          botName,
+          status: (() => {
+            const st = normalizeAttendeeState(existing.state ?? "");
+            return st.startsWith("joined") || st === "connected" ? "in_call" : "joining";
+          })(),
+          createdAt: now,
+          updatedAt: now,
+          detail: "Reusing the bot already in this Meet — admit CallIQ Bot once (deny extras)",
+        };
+        sessions.set(id, session);
+        return session;
+      }
+      let created: { id: string; raw: unknown };
+      try {
+        created = await attendeeCreate(meetingUrl, botName);
+      } catch (createErr) {
+        const msg = createErr instanceof Error ? createErr.message : String(createErr);
+        const raced = await keepOneActiveAttendeeBot(meetingUrl);
+        if (raced && /dedup|already exists|non-terminal/i.test(msg)) {
+          const session: BotSession = {
+            id,
+            provider: "attendee",
+            externalId: raced.id,
+            meetingUrl,
+            botName,
+            status: "joining",
+            createdAt: now,
+            updatedAt: now,
+            detail: "Reusing the bot already in this Meet — admit CallIQ Bot once",
+          };
+          sessions.set(id, session);
+          return session;
+        }
+        throw createErr;
+      }
       const session: BotSession = {
         id,
         provider: "attendee",
@@ -621,7 +784,7 @@ export async function joinMeetingBot(input: JoinBotInput): Promise<BotSession> {
         status: "joining",
         createdAt: now,
         updatedAt: now,
-        detail: "Attendee bot created — admit “CallIQ Bot” in Meet if asked",
+        detail: "Attendee bot created — admit “CallIQ Bot” once (deny any extra guests)",
       };
       sessions.set(id, session);
       return session;
