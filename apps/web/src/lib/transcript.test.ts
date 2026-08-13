@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseTranscript, formatClock, normalizeDiarizedTranscript } from "./transcript";
-import { liveSignals, conversationMap } from "./conversationIntel";
+import { liveSignals, conversationMap, speakerLanes } from "./conversationIntel";
 
 describe("parseTranscript", () => {
   it("splits speaker lines and estimates clocks", () => {
@@ -48,5 +48,12 @@ describe("conversationIntel", () => {
     expect(map[0]?.kind).toBe("open");
     expect(map.some((n) => n.kind === "risk")).toBe(true);
     expect(map.some((n) => n.kind === "resolve")).toBe(true);
+  });
+
+  it("puts Rep and Customer on opposite lanes with different fills", () => {
+    const lanes = speakerLanes(["Rep", "Customer", "Rep"]);
+    expect(lanes.get("Rep")?.lane).toBe("up");
+    expect(lanes.get("Customer")?.lane).toBe("down");
+    expect(lanes.get("Rep")?.fill).not.toBe(lanes.get("Customer")?.fill);
   });
 });

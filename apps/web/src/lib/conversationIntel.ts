@@ -17,6 +17,27 @@ export type MapNode = {
   hint?: string;
 };
 
+export type SpeakerLane = { fill: string; lane: "up" | "down" };
+
+const SPEAKER_FILLS = ["bg-accent", "bg-status-info", "bg-ink-300", "bg-accent-strong"];
+
+/** First speaker above the midline (teal), second below (sky). */
+export function speakerLanes(speakers: string[]): Map<string, SpeakerLane> {
+  const unique: string[] = [];
+  for (const name of speakers) {
+    const n = name.trim();
+    if (n && !unique.includes(n)) unique.push(n);
+  }
+  const map = new Map<string, SpeakerLane>();
+  unique.forEach((name, i) => {
+    map.set(name, {
+      fill: SPEAKER_FILLS[i % SPEAKER_FILLS.length]!,
+      lane: i % 2 === 0 ? "up" : "down",
+    });
+  });
+  return map;
+}
+
 const RULES: Array<{ kind: CopilotSignal["kind"]; label: string; re: RegExp; tag: string }> = [
   { kind: "objection", label: "Pricing pressure", re: /\b(pric|cost|budget|expensive|cheaper|roi)\w*/i, tag: "price" },
   { kind: "objection", label: "Implementation risk", re: /\b(implement|onboard|rollout|migration|timeline|weeks?)\b/i, tag: "impl" },
