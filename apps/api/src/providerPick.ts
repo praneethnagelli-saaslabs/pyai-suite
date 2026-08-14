@@ -62,6 +62,16 @@ export interface TranscribeFallbackResult {
   result: TranscriptResult;
   errors: string[];
   fallback: boolean;
+  /** Human-readable note when a later provider won after earlier tries failed. */
+  fallbackNote?: string;
+}
+
+/** Shared copy for UI banners when a later provider was used. */
+export function providerFallbackNote(used: string, errors: string[]): string | undefined {
+  if (!errors.length) return undefined;
+  const first = errors[0] ?? "earlier provider failed";
+  const more = errors.length > 1 ? ` (+${errors.length - 1} more)` : "";
+  return `Fell back to ${used} — ${first}${more}`;
 }
 
 /** Hear batch can sit for minutes; live Meet chunks cannot wait that long. */
@@ -132,12 +142,14 @@ export async function transcribeWithFallback(
         errors.push(`${id}: empty transcript`);
         continue;
       }
+      const fallback = errors.length > 0;
       return {
         text,
         provider: id,
         result,
         errors,
-        fallback: errors.length > 0,
+        fallback,
+        fallbackNote: fallback ? providerFallbackNote(id, errors) : undefined,
       };
     } catch (e) {
       const msg = e instanceof Error ? e.message.slice(0, 160) : "failed";

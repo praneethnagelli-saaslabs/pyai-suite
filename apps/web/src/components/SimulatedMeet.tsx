@@ -241,7 +241,7 @@ export type BriefSpeakerId = "me" | "them";
 
 export const BRIEF_PARTICIPANTS: MeetParticipant[] = [
   { id: "me", name: "You", role: "Me · mic", initials: "ME", accent: "from-sky-600 to-sky-800" },
-  { id: "them", name: "Jordan", role: "Them · Meet tab", initials: "JO", accent: "from-amber-600 to-amber-800" },
+  { id: "them", name: "Them", role: "Them · Meet tab", initials: "TH", accent: "from-amber-600 to-amber-800" },
 ];
 
 /** Same Me/Them script as live Brief capture labels. */

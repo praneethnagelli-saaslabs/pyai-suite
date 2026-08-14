@@ -35,7 +35,8 @@ describe("Brief", () => {
     expect(art.notes.decisions.length).toBeGreaterThan(0);
     expect(art.notes.decisions[0]!.decision).not.toMatch(/^(Me|Them):/i);
     expect(art.notes.actionItems.some((a) => /security pack/i.test(a.task))).toBe(true);
-    expect(art.notes.participants.length).toBeGreaterThan(0);
+    expect(art.notes.actionItems.every((a) => !/jordan/i.test(a.owner))).toBe(true);
+    expect(art.notes.participants.every((p) => !/jordan/i.test(p))).toBe(true);
     expect(art.segments.length).toBeGreaterThan(0);
     expect(art.privacy.storage).toBe("local");
   });
@@ -71,5 +72,8 @@ describe("Brief", () => {
     expect(miss.results).toHaveLength(0);
 
     expect((await mem.list())[0]?.id).toBe("m1");
+    const got = await mem.get("m1");
+    expect(got?.title).toBe(art.notes.title);
+    expect(got?.transcript).toContain("August");
   });
 });

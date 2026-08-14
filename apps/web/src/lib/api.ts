@@ -120,6 +120,8 @@ export const api = {
       latencyMs: number;
       diarized?: boolean;
       fallback?: boolean;
+      fallbackNote?: string;
+      errors?: string[];
     }>("/api/stt/transcribe", { method: "POST", body: JSON.stringify(body) }),
   analyzeCallIQ: (body: {
     transcriptText?: string;
@@ -365,6 +367,8 @@ export const api = {
       sttProvider: string;
       cleanupProvider: string;
       hearMs?: number;
+      fallback?: boolean;
+      fallbackNote?: string;
     }>("/api/scrib/demo/finish", { method: "POST", body: JSON.stringify(body) }),
   scribDemo: (body?: {
     mode?: string;
@@ -414,6 +418,8 @@ export const api = {
       cleanupProvider: string;
       transcript: string;
       stages?: Array<{ id: string; label: string; detail?: string; ms?: number }>;
+      fallback?: boolean;
+      fallbackNote?: string;
     }>("/api/scrib/transcribe", { method: "POST", body: JSON.stringify(body) }),
 
   sampleBrief: () => request<{ transcriptText: string; mode: string }>("/api/sample/brief"),
@@ -451,6 +457,9 @@ export const api = {
       spokenPhrase: string;
       transcriptText: string;
       hearMs?: number;
+      sttProvider?: string;
+      fallback?: boolean;
+      fallbackNote?: string;
       stages: Array<{ id: string; label: string; detail?: string; ms?: number }>;
       transcript: { text: string; segments: Array<{ id: string; speaker?: string; start: number; end: number; text: string }> };
       notes: MeetingNotes;
@@ -491,6 +500,44 @@ export const api = {
       }>;
       meetings: Array<{ id: string; date: string; title: string; mode: string }>;
     }>(`/api/brief/search?q=${encodeURIComponent(q)}`),
+  briefMeetings: () =>
+    request<{
+      backend: "memory" | "postgres";
+      recordingBackend?: "memory" | "s3";
+      meetings: Array<{ id: string; date: string; title: string; mode: string; hasRecording?: boolean }>;
+    }>("/api/brief/meetings"),
+  briefMeeting: (id: string) =>
+    request<{
+      id: string;
+      date: string;
+      title: string;
+      mode: string;
+      transcript: string;
+      notes: MeetingNotes;
+      backend: "memory" | "postgres";
+      hasRecording?: boolean;
+      recordingUrl?: string | null;
+    }>(`/api/brief/meetings/${encodeURIComponent(id)}`),
+  briefSaveRecording: (id: string, body: { audioBase64: string; contentType?: string; format?: string }) =>
+    request<{
+      ok: boolean;
+      playPath: string;
+      byteLength: number;
+      backend: "memory" | "s3";
+    }>(`/api/brief/meetings/${encodeURIComponent(id)}/recording`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  calliqSaveRecording: (id: string, body: { audioBase64: string; contentType?: string; format?: string }) =>
+    request<{
+      ok: boolean;
+      playPath: string;
+      byteLength: number;
+      backend: "memory" | "s3";
+    }>(`/api/calliq/calls/${encodeURIComponent(id)}/recording`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   simulatorRun: (body: {
     agentName?: string;

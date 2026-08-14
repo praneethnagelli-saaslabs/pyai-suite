@@ -68,6 +68,7 @@ export async function sttRoutes(app: FastifyInstance, svc: AppServices): Promise
         latencyMs: Date.now() - t0,
         usage: heard.result.usage,
         fallback: heard.fallback,
+        fallbackNote: heard.fallbackNote,
         errors: heard.errors.length ? heard.errors : undefined,
       };
     } catch (e) {

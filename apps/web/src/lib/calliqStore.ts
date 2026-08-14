@@ -33,6 +33,8 @@ export interface CalliqCall {
   runId?: string;
   analysis?: CallAnalysis;
   error?: string;
+  /** Server-stored recording available at /api/calliq/calls/:id/recording */
+  hasRecording?: boolean;
 }
 
 export const CALLIQ_CALLS_KEY = "calliq.calls.v1";

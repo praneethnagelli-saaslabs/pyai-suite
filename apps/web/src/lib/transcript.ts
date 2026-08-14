@@ -10,7 +10,7 @@ export type Utterance = {
 
 /** OpenAI diarize uses `Speaker A:`; Hear uses `[speaker_2]` / `speaker_1:`. */
 const NAMED =
-  "Sales Rep|CallIQ Bot|Speaker\\s+[A-Z0-9]+|speaker[_\\s-]?\\d+|speaker\\s+\\d+|Rep|Customer|Prospect|Buyer|Me|Them|You|Alex|Dana|Jordan";
+  "Sales Rep|CallIQ Bot|Speaker\\s+[A-Z0-9]+|speaker[_\\s-]?\\d+|speaker\\s+\\d+|Rep|Customer|Prospect|Buyer|Me|Them|You|Alex|Dana";
 
 function speakerLabelRe(): RegExp {
   return new RegExp(

@@ -14,6 +14,7 @@ import { calliqBotRoutes } from "./routes/calliqBot.js";
 import { googleMeetRoutes } from "./routes/googleMeet.js";
 import { simulatorCallRoutes } from "./routes/simulatorCall.js";
 import { simulatorCatalogRoutes } from "./routes/simulatorCatalog.js";
+import { recordingRoutes } from "./routes/recordings.js";
 import { transcribeWithFallback } from "./providerPick.js";
 import { setMeetingBotHear } from "./meetingBot/index.js";
 
@@ -48,6 +49,7 @@ export async function buildServer() {
   await app.register(async (a) => playgroundRoutes(a, svc));
   await app.register(async (a) => v1Routes(a, svc));
   await app.register(async (a) => productsRoutes(a, svc));
+  await app.register(async (a) => recordingRoutes(a, svc));
   await app.register(async (a) => jobsRoutes(a, svc));
   await app.register(async (a) => realtimeRoutes(a, svc));
   await app.register(async (a) => sttRoutes(a, svc));

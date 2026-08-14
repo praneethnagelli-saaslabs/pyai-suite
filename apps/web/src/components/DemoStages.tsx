@@ -89,6 +89,8 @@ export function DemoStages({
               done && !active && "border-ink-100 bg-ink-50/80",
               pending && "border-ink-100 opacity-45",
               !controlled && !done && !active && "border-ink-100 opacity-60",
+              /fallback/i.test(`${s.label} ${s.detail ?? ""}`) &&
+                "border-amber-300/70 bg-amber-50/80 dark:border-amber-700/50 dark:bg-amber-950/30",
             )}
           >
             <span

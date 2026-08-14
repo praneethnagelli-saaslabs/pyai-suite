@@ -42,6 +42,7 @@ export type StoredChunk = {
 export interface MeetingStore {
   readonly backend: "memory" | "postgres";
   saveMeeting(meeting: StoredMeeting): Promise<void>;
+  getMeeting(id: string): Promise<StoredMeeting | null>;
   listMeetings(): Promise<MeetingListItem[]>;
   replaceChunks(meetingId: string, chunks: StoredChunk[]): Promise<void>;
   loadChunks(): Promise<StoredChunk[]>;

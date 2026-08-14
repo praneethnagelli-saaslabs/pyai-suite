@@ -3,6 +3,7 @@ import { MeetingMemory } from "@pyai/brief";
 import { createMeetingStore, createRunStore, type RunStore } from "@pyai/db";
 import { createJobQueue, type JobQueue, InMemoryQueue } from "@pyai/worker";
 import { createSimulatorCatalog, type SimulatorCatalog } from "@pyai/simulator";
+import { createRecordingStore, type RecordingStore } from "./recordingStore.js";
 
 /**
  * App-wide services built once and shared by every route (spec #55).
@@ -13,6 +14,7 @@ export interface AppServices {
   runStore: RunStore;
   jobs: JobQueue;
   simulator: SimulatorCatalog;
+  recordings: RecordingStore;
 }
 
 export async function createServices(): Promise<AppServices> {
@@ -24,6 +26,7 @@ export async function createServices(): Promise<AppServices> {
   });
   const runStore = await createRunStore(process.env.DATABASE_URL);
   const meetingStore = await createMeetingStore(process.env.DATABASE_URL);
+  const recordings = await createRecordingStore();
   const embeddings =
     platform.registry.getAdapterFor(Capability.EMBEDDINGS)?.asEmbeddings?.() ??
     platform.registry.getAdapterFor(Capability.EMBEDDINGS, "mock")?.asEmbeddings?.();
@@ -46,5 +49,6 @@ export async function createServices(): Promise<AppServices> {
     runStore,
     jobs,
     simulator: createSimulatorCatalog(),
+    recordings,
   };
 }

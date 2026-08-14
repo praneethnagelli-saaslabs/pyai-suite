@@ -12,6 +12,11 @@ export class MemoryMeetingStore implements MeetingStore {
     this.meetings.set(meeting.id, { ...meeting });
   }
 
+  async getMeeting(id: string): Promise<StoredMeeting | null> {
+    const m = this.meetings.get(id);
+    return m ? { ...m } : null;
+  }
+
   async listMeetings(): Promise<MeetingListItem[]> {
     return [...this.meetings.values()]
       .sort((a, b) => b.date.localeCompare(a.date))
@@ -91,6 +96,36 @@ export class PostgresMeetingStore implements MeetingStore {
       title: r.title,
       mode: r.mode,
     }));
+  }
+
+  async getMeeting(id: string): Promise<StoredMeeting | null> {
+    const safeId = id.trim().slice(0, 120);
+    if (!safeId) return null;
+    const rows = await this.sql<
+      {
+        id: string;
+        date: Date | string;
+        title: string;
+        mode: string;
+        notes: unknown;
+        transcript: string;
+      }[]
+    >`
+      SELECT id, date, title, mode, notes, transcript
+      FROM brief_meetings
+      WHERE id = ${safeId}
+      LIMIT 1
+    `;
+    const r = rows[0];
+    if (!r) return null;
+    return {
+      id: r.id,
+      date: typeof r.date === "string" ? r.date : r.date.toISOString(),
+      title: r.title,
+      mode: r.mode,
+      notes: r.notes,
+      transcript: r.transcript,
+    };
   }
 
   async replaceChunks(meetingId: string, chunks: StoredChunk[]): Promise<void> {

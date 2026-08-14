@@ -5,6 +5,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { DemoStages, type DemoStage } from "@/components/DemoStages";
 import { Button, Label, Select, RecDot } from "@/components/ui";
 import { ErrorBanner } from "@/components/ErrorBanner";
+import { FallbackNotice } from "@/components/FallbackNotice";
 import { useToast } from "@/components/Toast";
 import { api } from "@/lib/api";
 import { ensureWavCompatible, fileToBase64 } from "@/lib/audio";
@@ -190,6 +191,7 @@ export function ScribPage() {
   const [result, setResult] = useState<(FinishResult | DictateResult) | null>(null);
   const [spokenPhrase, setSpokenPhrase] = useState<string | null>(null);
   const [demoMode, setDemoMode] = useState<"live" | "simulated" | null>(null);
+  const [fallbackNote, setFallbackNote] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const mediaRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -228,6 +230,7 @@ export function ScribPage() {
     setResult(null);
     setSpokenPhrase(null);
     setDemoMode(null);
+    setFallbackNote(null);
     setStages(DEMO_PIPELINE.map((s) => ({ ...s })));
     setCompletedStageIds([]);
     setActiveStageId("speak");
@@ -242,6 +245,7 @@ export function ScribPage() {
       const speak = await api.scribDemoSpeak({ ttsProvider });
       setSpokenPhrase(speak.spokenPhrase);
       setDemoMode(speak.demoMode);
+      if (speak.fallbackNote) setFallbackNote(speak.fallbackNote);
       setStages((prev) =>
         prev.map((s) => (s.id === "speak" ? { ...speak.stage, detail: speak.stage.detail ?? "Playing…" } : s)),
       );
@@ -304,6 +308,7 @@ export function ScribPage() {
       setActiveStageId(null);
 
       setDemoMode(out.demoMode);
+      if (out.fallbackNote) setFallbackNote(out.fallbackNote);
       setResult(out);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -361,6 +366,7 @@ export function ScribPage() {
           sttProvider,
           cleanupProvider,
         });
+        if (out.fallbackNote) setFallbackNote(out.fallbackNote);
         setStages(out.stages ?? []);
         setCompletedStageIds(["hear", "cleanup", "insert"]);
         setActiveStageId(null);
@@ -465,9 +471,10 @@ export function ScribPage() {
         </section>
 
         <section className="space-y-4">
+          <FallbackNotice note={fallbackNote} />
           {(busy || stages.length > 0) && (
-            <div className="panel p-4">
-              <h3 className="mb-3 text-sm font-semibold">Pipeline</h3>
+            <div className="panel space-y-3 p-4">
+              <h3 className="text-sm font-semibold">Pipeline</h3>
               <DemoStages
                 stages={stages}
                 running={busy && phase !== "demo"}

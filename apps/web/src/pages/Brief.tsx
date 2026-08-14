@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageHeader, EmptyState } from "@/components/EmptyState";
 import { DemoStages, type DemoStage } from "@/components/DemoStages";
 import { MeetingBrief } from "@/components/MeetingBrief";
 import { Button, Input, Label, Select, Textarea, RecDot } from "@/components/ui";
 import { ErrorBanner } from "@/components/ErrorBanner";
+import { FallbackNotice } from "@/components/FallbackNotice";
 import { api } from "@/lib/api";
+import { cn } from "@/lib/cn";
+import { formatFallbackNote } from "@/lib/fallback";
 import { pickPreferred, sortProviders } from "@/lib/providers";
 import {
   prepareForStt,
@@ -15,6 +18,8 @@ import {
   displayFileName,
 } from "@/lib/audio";
 import { transcribeUploadedRecording } from "@/lib/transcribeUpload";
+import { uploadEntityRecording } from "@/lib/uploadRecording";
+import { recordingPlayUrl } from "@/components/RecordingPlayer";
 import { RecordingUploadButton } from "@/components/RecordingUpload";
 import { SampleRecordingButtons } from "@/components/SampleRecordingButtons";
 import { extractMeetingUrl } from "@/lib/meetingUrl";
@@ -50,11 +55,13 @@ const DEMO_PIPELINE: DemoStage[] = [
 
 export function BriefPage() {
   const [params, setSearchParams] = useSearchParams();
+  const queryClient = useQueryClient();
   const providers = useQuery({ queryKey: ["providers"], queryFn: api.providers });
+  const meetingsQ = useQuery({ queryKey: ["brief-meetings"], queryFn: api.briefMeetings });
   const [transcript, setTranscript] = useState("");
   const [meetUrl, setMeetUrl] = useState("https://meet.google.com/new");
   const [mode, setMode] = useState("Planning");
-  const [query, setQuery] = useState("launch");
+  const [query, setQuery] = useState("");
   const [llmProvider, setLlmProvider] = useState("mock");
   const [sttProvider, setSttProvider] = useState("mock");
   const [busy, setBusy] = useState(false);
@@ -62,7 +69,10 @@ export function BriefPage() {
   const [chunkBusy, setChunkBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [captureNote, setCaptureNote] = useState<string | null>(null);
+  const [fallbackNote, setFallbackNote] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(null);
+  const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
+  const [recordingUrl, setRecordingUrl] = useState<string | null>(null);
   const [search, setSearch] = useState<Awaited<ReturnType<typeof api.briefSearch>> | null>(null);
   const [stages, setStages] = useState<DemoStage[]>([]);
   const [showCaptureHelp, setShowCaptureHelp] = useState(false);
@@ -111,6 +121,40 @@ export function BriefPage() {
     () => pickPreferred(providers.data?.providers ?? [], "tts"),
     [providers.data],
   );
+
+  async function refreshMeetings(selectId?: string) {
+    await queryClient.invalidateQueries({ queryKey: ["brief-meetings"] });
+    if (selectId) setSelectedMeetingId(selectId);
+  }
+
+  async function openPastMeeting(id: string) {
+    setBusy(true);
+    setError(null);
+    setStages([]);
+    setActiveStageId(null);
+    setFallbackNote(null);
+    try {
+      const m = await api.briefMeeting(id);
+      setSelectedMeetingId(m.id);
+      setTranscript(m.transcript || "");
+      if (m.mode) setMode(m.mode);
+      setRecordingUrl(
+        m.hasRecording ? m.recordingUrl || recordingPlayUrl("brief", m.id) : null,
+      );
+      setResult({
+        status: "SUCCEEDED",
+        runId: m.id,
+        notes: m.notes,
+        transcript: m.transcript,
+        privacy: { microphone: "local", uploadedTo: "stored", storage: "local" },
+      });
+      setCaptureNote(`Opened past meeting · ${m.title || m.id}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (!providers.data) return;
@@ -176,6 +220,7 @@ export function BriefPage() {
     setSearch(null);
     setTranscript("");
     setCaptureNote(null);
+    setFallbackNote(null);
     setDemoMode(null);
     setMode("Planning");
     setLiveCaption("");
@@ -211,8 +256,8 @@ export function BriefPage() {
       await sleep(650);
       if (demoAbort.current) return;
       setMeetPresent(["me", "them"]);
-      setMeetStatus("Jordan joined");
-      setStages((prev) => prev.map((s) => (s.id === "join" ? { ...s, detail: "Jordan joined" } : s)));
+      setMeetStatus("Them joined");
+      setStages((prev) => prev.map((s) => (s.id === "join" ? { ...s, detail: "Them joined" } : s)));
 
       await sleep(400);
       if (demoAbort.current) return;
@@ -259,6 +304,7 @@ export function BriefPage() {
         const audio = await pending;
         if (nextPending) pending = nextPending;
         if (audio.demoMode === "live" && audio.audioBase64) liveTts = true;
+        if (audio.fallbackNote) setFallbackNote(audio.fallbackNote);
 
         setCaptureSource(source);
         setChunkBusy(true);
@@ -345,7 +391,10 @@ export function BriefPage() {
       await sleep(250);
       setCompletedStageIds(["join", "share", "capture", "summary", "memory"]);
       setActiveStageId(null);
-      setSearch(await api.briefSearch(query || "launch"));
+      setSelectedMeetingId(out.runId);
+      await refreshMeetings(out.runId);
+      setSearch(null);
+      setQuery("");
     } catch (e) {
       stopDemoSpeech();
       setError(e instanceof Error ? e.message : String(e));
@@ -393,6 +442,8 @@ export function BriefPage() {
     setBusy(true);
     setUploading(true);
     setTranscript("");
+    setRecordingUrl(null);
+    setFallbackNote(null);
     setCaptureNote(`Hear batch + diarize · ${displayFileName(file.name)}`);
     setStages([
       { id: "hear", label: "Hear — diarizing recording…", detail: displayFileName(file.name) },
@@ -411,31 +462,76 @@ export function BriefPage() {
           setCaptureNote(label);
           setStages((prev) => prev.map((s) => (s.id === "hear" ? { ...s, detail: label } : s)));
         },
-        onPartial: ({ text, part, total }) => {
+        onPartial: ({ text, part, total, provider, fallback }) => {
           setTranscript(text);
           setCaptureNote(
             total > 1
               ? `Transcript live · part ${part} of ${total} done`
               : "Transcript ready — writing summary…",
           );
+          if (fallback) {
+            setStages((prev) =>
+              prev.map((s) =>
+                s.id === "hear"
+                  ? { ...s, label: "Hear (fallback)", detail: `${provider} · part ${part}/${total}` }
+                  : s,
+              ),
+            );
+          }
         },
       });
+      if (heard.fallbackNote) setFallbackNote(heard.fallbackNote);
       const out = await api.briefAnalyze({
         transcriptText: heard.text,
         mode,
         llmProvider,
-        sttProvider,
+        sttProvider: heard.provider,
         title: displayFileName(file.name).replace(/\.[^.]+$/, "") || "Uploaded recording",
       });
       const text = ((typeof out.transcript === "string" ? out.transcript : "") || heard.text).trim();
       if (!text) throw new Error("No speech detected in that recording.");
       setTranscript(text);
-      setCaptureNote(`Hear via ${out.sttProvider ?? sttProvider}. Summary ready.`);
-      setStages(out.stages ?? []);
+      setCaptureNote(
+        heard.fallback
+          ? `Fell back to ${heard.provider}. Summary ready.`
+          : `Hear via ${heard.provider}. Summary ready.`,
+      );
+      setStages(
+        (out.stages ?? []).map((s) =>
+          s.id === "hear" && heard.fallback
+            ? {
+                ...s,
+                label: "Hear (fallback)",
+                detail: heard.fallbackNote ?? `${heard.provider} · diarized batch`,
+              }
+            : s.id === "hear"
+              ? { ...s, detail: `${heard.provider} · diarized batch` }
+              : s,
+        ),
+      );
       setResult(out);
       setCompletedStageIds((out.stages ?? []).map((s) => s.id));
       setActiveStageId(null);
-      setSearch(await api.briefSearch(query || "launch"));
+      setSelectedMeetingId(out.runId);
+      await refreshMeetings(out.runId);
+      try {
+        await uploadEntityRecording("brief", out.runId, file);
+        setRecordingUrl(recordingPlayUrl("brief", out.runId));
+        await refreshMeetings(out.runId);
+        setCaptureNote(
+          heard.fallback
+            ? `Fell back to ${heard.provider}. Summary + recording saved.`
+            : `Hear via ${heard.provider}. Summary + recording saved.`,
+        );
+      } catch (recErr) {
+        setCaptureNote(
+          `Hear via ${heard.provider}. Notes saved; recording not stored (${
+            recErr instanceof Error ? recErr.message.slice(0, 80) : "error"
+          }).`,
+        );
+      }
+      setSearch(null);
+      setQuery("");
       setBusy(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -469,7 +565,10 @@ export function BriefPage() {
       });
       setStages(out.stages ?? []);
       setResult(out);
-      setSearch(await api.briefSearch(query || "launch"));
+      setSelectedMeetingId(out.runId);
+      await refreshMeetings(out.runId);
+      setSearch(null);
+      setQuery("");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -478,7 +577,12 @@ export function BriefPage() {
   }
 
   async function doSearch() {
-    setSearch(await api.briefSearch(query));
+    const q = query.trim();
+    if (!q) {
+      setSearch(null);
+      return;
+    }
+    setSearch(await api.briefSearch(q));
   }
 
   function openMeet() {
@@ -529,9 +633,16 @@ export function BriefPage() {
       });
       setCaptureNote(
         out.fallback
-          ? `Live STT via ${out.provider} (Hear skipped) · ${speakerLabel}`
+          ? formatFallbackNote(out.provider, out.errors, out.fallbackNote) ??
+              `Fell back to ${out.provider} · ${speakerLabel}`
           : `Live STT via ${out.provider} · ${speakerLabel}: (Me/Them)…`,
       );
+      if (out.fallback) {
+        setFallbackNote(
+          formatFallbackNote(out.provider, out.errors, out.fallbackNote) ??
+            `Fell back to ${out.provider}`,
+        );
+      }
       setError(null);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -870,6 +981,7 @@ export function BriefPage() {
             {chunkBusy ? " · transcribing…" : ""}
           </p>
         ) : null}
+        <FallbackNotice note={fallbackNote} />
         {error ? (
           <div className="space-y-2">
             <ErrorBanner title="Couldn’t capture that meeting" message={error} />
@@ -885,7 +997,66 @@ export function BriefPage() {
         ) : null}
       </section>
 
-      <div className="grid gap-5 lg:grid-cols-2">
+      <div className="grid gap-5 lg:grid-cols-[240px_minmax(0,1fr)]">
+        <aside className="panel overflow-hidden p-0">
+          <div className="flex items-center justify-between border-b border-ink-100 px-3 py-2.5">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-500">Past meetings</h2>
+            <button
+              type="button"
+              className="text-[11px] text-ink-500 underline-offset-2 hover:text-ink-800 hover:underline"
+              disabled={meetingsQ.isFetching}
+              onClick={() => void meetingsQ.refetch()}
+            >
+              {meetingsQ.isFetching ? "…" : "Refresh"}
+            </button>
+          </div>
+          {meetingsQ.isError ? (
+            <div className="p-4 text-sm text-ink-500">Could not load meetings.</div>
+          ) : (meetingsQ.data?.meetings.length ?? 0) === 0 ? (
+            <div className="p-4 text-sm text-ink-500">
+              Nothing stored yet. Run a demo or end a meeting — notes stay in the database.
+            </div>
+          ) : (
+            <ul className="max-h-[560px] divide-y divide-ink-100 overflow-y-auto">
+              {(meetingsQ.data?.meetings ?? []).map((m) => (
+                <li key={m.id}>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void openPastMeeting(m.id)}
+                    className={cn(
+                      "flex w-full flex-col gap-0.5 px-3 py-2.5 text-left transition hover:bg-ink-50",
+                      selectedMeetingId === m.id && "bg-accent/5 hover:bg-accent/10",
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-sm font-medium text-ink-900">
+                        {m.title || "Untitled meeting"}
+                      </span>
+                      <span className="flex shrink-0 items-center gap-1">
+                        {m.hasRecording ? (
+                          <span className="rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent">
+                            Audio
+                          </span>
+                        ) : null}
+                        {m.mode ? (
+                          <span className="rounded bg-ink-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-ink-500">
+                            {m.mode}
+                          </span>
+                        ) : null}
+                      </span>
+                    </div>
+                    <span className="font-mono text-[10px] text-ink-400">
+                      {m.date ? new Date(m.date).toLocaleString() : m.id}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </aside>
+
+        <div className="grid min-w-0 gap-5 lg:grid-cols-2">
         <section className="panel space-y-3 p-4">
           <div>
             <Label>Live / imported transcript</Label>
@@ -1038,8 +1209,9 @@ export function BriefPage() {
         </section>
         <section className="space-y-4">
           {(busy || stages.length > 0) && (
-            <div className="panel p-4">
-              <h3 className="mb-3 text-sm font-semibold">Pipeline</h3>
+            <div className="panel space-y-3 p-4">
+              <h3 className="text-sm font-semibold">Pipeline</h3>
+              <FallbackNotice note={fallbackNote} />
               <DemoStages
                 stages={stages}
                 running={busy}
@@ -1050,17 +1222,23 @@ export function BriefPage() {
           )}
           {!result && !busy ? (
             <EmptyState
-              title="No meetings yet"
-              body="Capture Meet tab audio, upload a recording, or run the sample demo to generate decisions and action items."
+              title="No notes open"
+              body="Pick a past meeting on the left, or capture / upload / run the demo to create one."
               actionLabel="Capture Meet audio"
               onAction={() => void startMeetCapture()}
               secondaryLabel="Try sample demo"
               onSecondary={() => void runDemo()}
             />
           ) : result ? (
-            <MeetingBrief notes={result.notes} status={result.status} runId={result.runId} />
+            <MeetingBrief
+              notes={result.notes}
+              status={result.status}
+              runId={result.runId}
+              recordingUrl={recordingUrl}
+            />
           ) : null}
         </section>
+        </div>
       </div>
     </div>
   );

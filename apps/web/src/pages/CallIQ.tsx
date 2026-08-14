@@ -13,10 +13,13 @@ import {
 } from "@/components/SimulatedMeet";
 import { Button, Input, Label, Select, Textarea, AiWorking, RecDot } from "@/components/ui";
 import { ErrorBanner } from "@/components/ErrorBanner";
+import { FallbackNotice } from "@/components/FallbackNotice";
 import { InsightCard, ScoreOverview } from "@/components/InsightCard";
 import { ConversationWorkspace } from "@/components/workspace/ConversationWorkspace";
 import { RecordingUploadButton } from "@/components/RecordingUpload";
 import { SampleRecordingButtons } from "@/components/SampleRecordingButtons";
+import { RecordingPlayer, recordingPlayUrl } from "@/components/RecordingPlayer";
+import { uploadEntityRecording } from "@/lib/uploadRecording";
 import { pickPreferred, sortProviders } from "@/lib/providers";
 import {
   unlockAudioPlayback,
@@ -90,6 +93,7 @@ export function CallIQPage() {
   const [botBusy, setBotBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [botNote, setBotNote] = useState<string | null>(null);
+  const [fallbackNote, setFallbackNote] = useState<string | null>(null);
   const [stages, setStages] = useState<DemoStage[]>([]);
   const [botSessionId, setBotSessionId] = useState<string | null>(null);
   const [leavingBot, setLeavingBot] = useState(false);
@@ -502,6 +506,7 @@ export function CallIQPage() {
     setMeetStatus("Opening Meet lobby…");
     setMeetPhase("joining");
     setBotNote("People joining simulated Meet…");
+    setFallbackNote(null);
     setDetailTab("activity");
     setPipelineActive("bot");
     setPipelineDone([]);
@@ -565,6 +570,7 @@ export function CallIQPage() {
           i + 1 < CALLIQ_DEMO_LINES.length ? fetchTurn(CALLIQ_DEMO_LINES[i + 1]!) : null;
         const audio = await pending;
         if (nextPending) pending = nextPending;
+        if (audio.fallbackNote) setFallbackNote(audio.fallbackNote);
 
         setActiveSpeaker(speaker);
         setLiveCaption(`${turn.label}: ${turn.text}`);
@@ -970,6 +976,7 @@ export function CallIQPage() {
   async function uploadRecording(file: File) {
     setShowJoin(false);
     setError(null);
+    setFallbackNote(null);
     setBusy(true);
     const draft = createDraft("upload", {
       title: displayFileName(file.name).replace(/\.[^.]+$/, "") || "Uploaded recording",
@@ -991,7 +998,7 @@ export function CallIQPage() {
         onProgress: ({ label }) => {
           setStages((prev) => prev.map((s) => (s.id === "hear" ? { ...s, detail: label } : s)));
         },
-        onPartial: ({ text, part, total }) => {
+        onPartial: ({ text, part, total, provider, fallback }) => {
           setTranscript(text);
           patchCall(draft.id, { transcript: text, status: "recording" });
           if (part === 1) setDetailTab("workspace");
@@ -1000,32 +1007,58 @@ export function CallIQPage() {
               s.id === "hear"
                 ? {
                     ...s,
+                    label: fallback ? "Hear (fallback)" : s.label,
                     detail:
                       total > 1
-                        ? `part ${part} of ${total} ready — ${total - part} left`
-                        : "transcript ready",
+                        ? `${fallback ? `${provider} · ` : ""}part ${part} of ${total} ready — ${total - part} left`
+                        : fallback
+                          ? `${provider} · transcript ready`
+                          : "transcript ready",
                   }
                 : s,
             ),
           );
         },
       });
+      if (heard.fallbackNote) setFallbackNote(heard.fallbackNote);
       patchCall(draft.id, { transcript: heard.text, status: "analyzing" });
       setStages((prev) =>
-        prev.map((s) => (s.id === "hear" ? { ...s, detail: `${heard.provider} · ${heard.parts} part${heard.parts === 1 ? "" : "s"}` } : s)),
+        prev.map((s) =>
+          s.id === "hear"
+            ? {
+                ...s,
+                label: heard.fallback ? "Hear (fallback)" : "Hear — diarizing recording…",
+                detail: heard.fallback
+                  ? heard.fallbackNote ?? `${heard.provider} · ${heard.parts} part${heard.parts === 1 ? "" : "s"}`
+                  : `${heard.provider} · ${heard.parts} part${heard.parts === 1 ? "" : "s"}`,
+              }
+            : s,
+        ),
       );
       setBusy(true);
       setError(null);
       const out = await api.analyzeCallIQ({
         transcriptText: heard.text,
-        sttProvider,
+        sttProvider: heard.provider,
         llmProvider,
         verifyProvider: llmProvider,
       });
       const text = (out.transcript?.text?.trim() || heard.text).trim();
       if (!text) throw new Error("No speech detected in that recording.");
       setTranscript(text);
-      setStages(out.stages ?? []);
+      setStages(
+        (out.stages ?? []).map((s) =>
+          s.id === "hear" && heard.fallback
+            ? {
+                ...s,
+                label: "Hear (fallback)",
+                detail: heard.fallbackNote ?? `${heard.provider} · diarized batch`,
+              }
+            : s.id === "hear"
+              ? { ...s, detail: `${heard.provider} · diarized batch` }
+              : s,
+        ),
+      );
       setPipelineActive(null);
       setPipelineDone((out.stages ?? []).map((s) => s.id));
       const analysis = {
@@ -1045,6 +1078,12 @@ export function CallIQPage() {
         title,
         error: undefined,
       });
+      try {
+        await uploadEntityRecording("calliq", draft.id, file);
+        patchCall(draft.id, { hasRecording: true });
+      } catch {
+        /* notes still usable without audio archive */
+      }
       selectCall(draft.id);
       setDetailTab("workspace");
       setBusy(false);
@@ -1404,8 +1443,15 @@ export function CallIQPage() {
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="truncate text-sm font-medium text-ink-900">{c.title}</span>
-                      <span className="shrink-0 rounded bg-ink-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-ink-500">
-                        {sourceLabel(c.source)}
+                      <span className="flex shrink-0 items-center gap-1">
+                        {c.hasRecording ? (
+                          <span className="rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent">
+                            Audio
+                          </span>
+                        ) : null}
+                        <span className="rounded bg-ink-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-ink-500">
+                          {sourceLabel(c.source)}
+                        </span>
                       </span>
                     </div>
                     <div className="flex items-center gap-2 text-[11px] text-ink-400">
@@ -1502,7 +1548,14 @@ export function CallIQPage() {
               </div>
 
               {detailTab === "workspace" ? (
-                <ConversationWorkspace
+                <div className="space-y-3">
+                  {selected.hasRecording ? (
+                    <RecordingPlayer
+                      src={recordingPlayUrl("calliq", selected.id)}
+                      label="Call recording"
+                    />
+                  ) : null}
+                  <ConversationWorkspace
                   transcript={transcript}
                   analysis={analysis}
                   live={botBusy || selected.status === "recording"}
@@ -1512,6 +1565,7 @@ export function CallIQPage() {
                     void analyze(transcript, { callId: selected.id, source: selected.source })
                   }
                 />
+                </div>
               ) : null}
 
               {detailTab === "notes" ? (
@@ -1662,10 +1716,11 @@ export function CallIQPage() {
               ) : null}
 
               {detailTab === "activity" ? (
-                <div className="panel p-4">
+                <div className="panel space-y-3 p-4">
+                  <FallbackNotice note={fallbackNote} />
                   {(busy || botBusy || stages.length > 0) && (
                     <>
-                      <h3 className="mb-3 text-sm font-semibold">Progress</h3>
+                      <h3 className="text-sm font-semibold">Progress</h3>
                       <DemoStages
                         stages={stages}
                         running={busy || botBusy}
@@ -1685,15 +1740,16 @@ export function CallIQPage() {
               ) : null}
             </>
           ) : (
-            <div className="panel p-4">
-              <h3 className="mb-3 text-sm font-semibold">In progress</h3>
+            <div className="panel space-y-3 p-4">
+              <h3 className="text-sm font-semibold">In progress</h3>
+              <FallbackNotice note={fallbackNote} />
               <DemoStages
                 stages={stages}
                 running={busy || botBusy}
                 activeId={pipelineActive}
                 completedIds={pipelineDone}
               />
-              {botNote ? <p className="mt-3 text-xs text-ink-500">{botNote}</p> : null}
+              {botNote ? <p className="text-xs text-ink-500">{botNote}</p> : null}
             </div>
           )}
         </section>

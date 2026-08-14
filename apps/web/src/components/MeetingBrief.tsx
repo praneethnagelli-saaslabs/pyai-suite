@@ -24,10 +24,12 @@ export function MeetingBrief({
   notes,
   status,
   runId,
+  recordingUrl,
 }: {
   notes: MeetingNotes;
   status?: string;
   runId?: string;
+  recordingUrl?: string | null;
 }) {
   return (
     <article className="panel space-y-5 p-5 animate-fade-up">
@@ -40,9 +42,6 @@ export function MeetingBrief({
             </span>
           ) : null}
         </div>
-        {notes.participants?.length ? (
-          <p className="mt-2 text-xs text-ink-500">{notes.participants.join(" · ")}</p>
-        ) : null}
         {status || runId ? (
           <p className="mt-1 font-mono text-[10px] text-ink-400">
             {status}
@@ -51,6 +50,15 @@ export function MeetingBrief({
           </p>
         ) : null}
       </header>
+
+      {recordingUrl ? (
+        <div className="rounded-lg border border-ink-100 bg-ink-50/80 px-3 py-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-ink-400">Recording</div>
+          <audio className="mt-1.5 w-full" controls preload="metadata" src={recordingUrl}>
+            <track kind="captions" />
+          </audio>
+        </div>
+      ) : null}
 
       {notes.summary ? (
         <p className="text-sm leading-relaxed text-ink-700">{notes.summary}</p>

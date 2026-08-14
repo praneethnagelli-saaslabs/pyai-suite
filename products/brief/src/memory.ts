@@ -275,4 +275,8 @@ export class MeetingMemory {
   async list() {
     return this.store.listMeetings();
   }
+
+  async get(id: string) {
+    return this.store.getMeeting(id.trim().slice(0, 120));
+  }
 }

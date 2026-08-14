@@ -4,6 +4,7 @@ import type { AppServices } from "../services.js";
 import {
   liveCandidates,
   pickProvider,
+  providerFallbackNote,
   sttFallbackMessage,
   transcribeWithFallback,
 } from "../providerPick.js";
@@ -85,11 +86,13 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
             audioFormat: spoken.format || "mp3",
             ttsProvider: id,
             speakMs,
-            fallbackNote: errors.length ? `fallback after: ${errors.join("; ")}` : undefined,
+            fallbackNote: providerFallbackNote(id, errors),
             stage: {
               id: "speak",
-              label: "Push-to-talk (Speak)",
-              detail: `${id} · playing sample utterance`,
+              label: errors.length ? "Push-to-talk (Speak · fallback)" : "Push-to-talk (Speak)",
+              detail: errors.length
+                ? `${id} after ${errors.join("; ")} · playing sample`
+                : `${id} · playing sample utterance`,
               ms: speakMs,
             },
           };
@@ -106,9 +109,10 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
       ttsProvider: "browser",
       speakMs: Date.now() - t0,
       useBrowserSpeech: true,
+      fallbackNote: providerFallbackNote("browser", errors) ?? "Using browser speech synthesis",
       stage: {
         id: "speak",
-        label: "Push-to-talk (browser speech)",
+        label: "Push-to-talk (browser speech · fallback)",
         detail: errors.length
           ? `Live TTS unavailable (${errors[0]}); using browser voice`
           : "Using browser speech synthesis",
@@ -139,6 +143,7 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
     let hearMs = 0;
     let sttProvider = pickProvider(svc.platform, Capability.BATCH_STT, req.body.sttProvider);
     let demoMode: "live" | "simulated" = req.body.demoMode ?? "simulated";
+    let fallbackNote: string | undefined;
 
     const b64 = req.body.audioBase64?.trim();
     if (b64 && b64.length < 10_000_000) {
@@ -156,6 +161,7 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
           raw = heard.text;
           sttProvider = heard.provider;
           demoMode = "live";
+          fallbackNote = heard.fallbackNote;
           stages.push({
             id: "hear",
             label: heard.fallback ? "Transcribe (fallback)" : "Transcribe (Hear)",
@@ -173,6 +179,7 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
         });
         raw = WF_SAMPLE.rawText;
         demoMode = "simulated";
+        fallbackNote = "Fell back to sample transcript — live STT failed";
       }
     }
 
@@ -221,6 +228,8 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
       spokenPhrase: WF_SAMPLE.spokenPhrase,
       stages,
       hearMs,
+      fallback: Boolean(fallbackNote),
+      fallbackNote,
       ...art,
     };
   });
@@ -316,6 +325,7 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
     let sttProvider = "mock";
     let sttMs = 0;
     let sttErrors: string[] = [];
+    let sttFallbackNote: string | undefined;
 
     try {
       const heard = await transcribeWithFallback(
@@ -328,12 +338,23 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
       transcriptText = heard.text;
       sttProvider = heard.provider;
       sttErrors = heard.errors;
+      sttFallbackNote = heard.fallbackNote;
     } catch (e) {
       const errors = e && typeof e === "object" && "errors" in e ? (e as { errors: string[] }).errors : [];
       return reply.code(502).send({
         error: sttFallbackMessage(errors.length ? errors : [e instanceof Error ? e.message : "transcription failed"]),
       });
     }
+
+    const hearFallback = sttErrors.length > 0;
+    const hearStage = {
+      id: "hear",
+      label: hearFallback ? "Transcribe (fallback)" : "Transcribe",
+      detail: hearFallback
+        ? `${sttProvider} after ${sttErrors.join("; ")}`
+        : sttProvider,
+      ms: sttMs,
+    };
 
     try {
       if (lastText) {
@@ -354,14 +375,11 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
             appRuleId: appName,
             sttProvider,
             cleanupProvider: decision.provider,
+            fallback: hearFallback,
+            fallbackNote: sttFallbackNote,
             latency: { sttMs, cleanupMs: 0, dictionaryMs: 0, totalMs: sttMs },
             stages: [
-              {
-                id: "hear",
-                label: "Transcribe",
-                detail: sttErrors.length ? `${sttProvider} (fallback)` : sttProvider,
-                ms: sttMs,
-              },
+              { ...hearStage, ms: sttMs },
               { id: "refine", label: "Refine last insert", detail: decision.provider },
             ],
           };
@@ -390,13 +408,10 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
         durationMs: out.durationMs,
         usage: out.usage,
         transcript: transcriptText,
+        fallback: hearFallback,
+        fallbackNote: sttFallbackNote,
         stages: [
-          {
-            id: "hear",
-            label: "Transcribe",
-            detail: sttErrors.length ? `${sttProvider} (fallback)` : sttProvider,
-            ms: art.latency.sttMs,
-          },
+          { ...hearStage, ms: art.latency.sttMs },
           { id: "cleanup", label: "Cleanup", detail: art.cleanupProvider, ms: art.latency.cleanupMs },
           { id: "insert", label: "Ready to insert", detail: art.cleaned.slice(0, 60) },
         ],
@@ -457,11 +472,13 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
             audioFormat: spoken.format || "mp3",
             ttsProvider: id,
             speakMs,
-            fallbackNote: errors.length ? `fallback after: ${errors.join("; ")}` : undefined,
+            fallbackNote: providerFallbackNote(id, errors),
             stage: {
               id: "play",
-              label: "Play meeting audio",
-              detail: `${id} · sample planning call`,
+              label: errors.length ? "Play meeting audio (fallback)" : "Play meeting audio",
+              detail: errors.length
+                ? `${id} after ${errors.join("; ")} · sample planning call`
+                : `${id} · sample planning call`,
               ms: speakMs,
             },
           };
@@ -480,9 +497,10 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
       ttsProvider: "browser",
       speakMs: Date.now() - t0,
       useBrowserSpeech: true,
+      fallbackNote: providerFallbackNote("browser", errors) ?? "Using browser speech synthesis",
       stage: {
         id: "play",
-        label: "Play meeting audio (browser)",
+        label: "Play meeting audio (browser · fallback)",
         detail: errors.length
           ? `Live TTS unavailable (${errors[0]}); using browser voice`
           : "Using browser speech synthesis",
@@ -506,64 +524,79 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
   }>("/api/brief/demo/finish", async (req, reply) => {
     const { buildBriefWorkflow } = await import("@pyai/brief");
     const llmProvider = pickProvider(svc.platform, Capability.LLM, req.body.llmProvider);
-    const sttProvider = pickProvider(svc.platform, Capability.BATCH_STT, req.body.sttProvider);
+    let sttProvider = pickProvider(svc.platform, Capability.BATCH_STT, req.body.sttProvider);
     const mode = req.body.mode ?? OG_SAMPLE.mode;
     const title = req.body.title ?? OG_SAMPLE.title;
     const stages: Array<{ id: string; label: string; detail?: string; ms?: number }> = [];
     let transcriptText = OG_SAMPLE.transcriptText;
     let demoMode: "live" | "simulated" = req.body.demoMode ?? "simulated";
     let hearMs = 0;
+    let fallbackNote: string | undefined;
 
     const b64 = req.body.audioBase64?.trim();
     if (b64 && b64.length < 10_000_000) {
       try {
         const audio = Uint8Array.from(Buffer.from(b64, "base64"));
-        const sttAdapter = svc.platform.registry.getAdapterFor(Capability.BATCH_STT, sttProvider);
-        const stt = sttAdapter?.asSTT?.();
-        if (stt && sttProvider !== "mock" && audio.length > 0) {
+        if (audio.length > 0) {
           const tHear = Date.now();
-          const heard = await stt.transcribe({
-            audio,
-            format: req.body.audioFormat ?? "mp3",
-            diarize: true,
-            prompt:
-              "Me: Thanks for joining. Goal today is the July launch plan.\nThem: Security review is still open.\nTranscribe with Me: and Them: labels when possible.",
-          });
+          const heard = await transcribeWithFallback(
+            svc.platform,
+            {
+              audio,
+              format: req.body.audioFormat ?? "mp3",
+              diarize: true,
+              prompt:
+                "Me: Thanks for joining. Goal today is the July launch plan.\nThem: Security review is still open.\nTranscribe with Me: and Them: labels when possible.",
+            },
+            req.body.sttProvider,
+            { includeMock: false },
+          );
           hearMs = Date.now() - tHear;
-          const text = heard.text?.trim() ?? "";
+          sttProvider = heard.provider;
+          if (heard.fallbackNote) fallbackNote = heard.fallbackNote;
+          const text = heard.text.trim();
           const weak =
-            !text ||
-            text.length < 40 ||
-            /^(you[.!]?\s*)+$/i.test(text) ||
-            /^thank you/i.test(text);
-          // Keep Me/Them labels for the meeting brain.
+            text.length < 40 || /^(you[.!]?\s*)+$/i.test(text) || /^thank you/i.test(text);
           if (!weak) {
             demoMode = "live";
             const hasSpeakers = /\b(me|them)\s*:/i.test(text);
             transcriptText = hasSpeakers ? text : OG_SAMPLE.transcriptText;
             stages.push({
               id: "hear",
-              label: "Hear (diarized STT)",
-              detail: hasSpeakers
-                ? `${sttProvider} · Me/Them labels preserved`
-                : `${sttProvider} heard speech · applied Me/Them labels`,
+              label: heard.fallback ? "Hear (fallback)" : "Hear (diarized STT)",
+              detail: heard.fallback
+                ? `${heard.provider} after ${heard.errors.join("; ")} · ${
+                    hasSpeakers ? "Me/Them labels preserved" : "applied Me/Them labels"
+                  }`
+                : hasSpeakers
+                  ? `${heard.provider} · Me/Them labels preserved`
+                  : `${heard.provider} heard speech · applied Me/Them labels`,
               ms: hearMs,
             });
           } else {
             stages.push({
               id: "hear",
-              label: "Hear (diarized STT)",
-              detail: `${sttProvider} returned weak text; using Me/Them sample transcript`,
+              label: heard.fallback ? "Hear (fallback)" : "Hear (diarized STT)",
+              detail: `${heard.provider} returned weak text; using Me/Them sample transcript`,
               ms: hearMs,
             });
             demoMode = "simulated";
           }
         }
       } catch (e) {
+        const errs =
+          e && typeof e === "object" && "errors" in e ? (e as { errors: string[] }).errors : [];
+        fallbackNote =
+          providerFallbackNote("sample transcript", errs) ??
+          (e instanceof Error ? e.message.slice(0, 120) : "STT failed; using sample transcript");
         stages.push({
           id: "hear",
           label: "Hear (fallback)",
-          detail: e instanceof Error ? e.message.slice(0, 120) : "STT failed; using sample transcript",
+          detail: errs.length
+            ? `${errs.join("; ")} — using sample transcript`
+            : e instanceof Error
+              ? e.message.slice(0, 120)
+              : "STT failed; using sample transcript",
         });
         demoMode = "simulated";
       }
@@ -611,10 +644,13 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
       usage: out.usage,
       gates: out.gates,
       llmProvider,
+      sttProvider,
       demoMode,
       spokenPhrase: OG_SAMPLE.spokenPhrase,
       transcriptText,
       hearMs,
+      fallback: Boolean(fallbackNote),
+      fallbackNote,
       stages,
       ...art,
     };
@@ -698,6 +734,43 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
     const raw = typeof req.query.q === "string" ? req.query.q : "";
     const q = raw.trim().slice(0, 400);
     return memory.search(q);
+  });
+
+  app.get("/api/brief/meetings", async () => {
+    const meetings = await memory.list();
+    const flags = await svc.recordings.hasMany(
+      "brief",
+      meetings.map((m) => m.id),
+    );
+    return {
+      backend: memory.backend,
+      recordingBackend: svc.recordings.backend,
+      meetings: meetings.map((m) => ({ ...m, hasRecording: Boolean(flags[m.id]) })),
+    };
+  });
+
+  app.get<{ Params: { id: string } }>("/api/brief/meetings/:id", async (req, reply) => {
+    const id = typeof req.params.id === "string" ? req.params.id.trim().slice(0, 120) : "";
+    if (!id) return reply.code(400).send({ error: "meeting id required" });
+    const row = await memory.get(id);
+    if (!row) return reply.code(404).send({ error: "meeting not found" });
+    const { MeetingNotesSchema } = await import("@pyai/brief");
+    const parsed = MeetingNotesSchema.safeParse(row.notes);
+    if (!parsed.success) {
+      return reply.code(502).send({ error: "stored meeting notes are invalid" });
+    }
+    const hasRecording = await svc.recordings.has("brief", id);
+    return {
+      id: row.id,
+      date: row.date,
+      title: row.title,
+      mode: row.mode,
+      transcript: row.transcript,
+      notes: parsed.data,
+      backend: memory.backend,
+      hasRecording,
+      recordingUrl: hasRecording ? `/api/brief/meetings/${encodeURIComponent(id)}/recording` : null,
+    };
   });
 
   // ---- Simulator ----
@@ -934,6 +1007,7 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
           text,
           audioBase64: Buffer.from(spoken.audio).toString("base64"),
           audioFormat: spoken.format || "mp3",
+          fallbackNote: providerFallbackNote(id, errors),
         };
       } catch (e) {
         errors.push(`${id}: ${e instanceof Error ? e.message.slice(0, 140) : "failed"}`);
@@ -947,7 +1021,7 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
       speaker,
       text,
       useBrowserSpeech: true,
-      fallbackNote: errors[0],
+      fallbackNote: providerFallbackNote("browser", errors) ?? errors[0],
     };
   });
 
@@ -992,7 +1066,7 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
           ttsProvider: id,
           speakMs: Date.now() - t0,
           turns: clips,
-          fallbackNote: errors.length ? `fallback after: ${errors.join("; ")}` : undefined,
+          fallbackNote: providerFallbackNote(id, errors),
         };
       } catch (e) {
         errors.push(`${id}: ${e instanceof Error ? e.message.slice(0, 140) : "failed"}`);

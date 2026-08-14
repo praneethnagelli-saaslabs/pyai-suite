@@ -70,6 +70,10 @@ describe("MeetingStore", () => {
     ]);
     const listed = await store.listMeetings();
     expect(listed[0]?.id).toBe("m1");
+    const got = await store.getMeeting("m1");
+    expect(got?.title).toBe("Launch planning");
+    expect(got?.transcript).toMatch(/August/);
+    expect(await store.getMeeting("missing")).toBeNull();
     const chunks = await store.loadChunks();
     expect(chunks).toHaveLength(1);
     expect(chunks[0]?.embedding).toEqual([0.3]);

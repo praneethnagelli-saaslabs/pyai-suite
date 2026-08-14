@@ -110,10 +110,10 @@ export function buildBriefWorkflow(
                   "title: 3–7 specific words (never 'Meeting notes' or 'mock title').",
                   "summary: 2–4 past-tense sentences that synthesize; never quote 'Me:' / 'Them:' lines.",
                   "decisions: paraphrase the decision in one sentence; include evidence.excerpt from the transcript.",
-                  "actionItems: owner is a person (Me→You, unnamed Them→Jordan), task is a verb phrase, deadline if spoken.",
+                  "actionItems: owner is You or Them (or a real name only if spoken), task is a verb phrase, deadline if spoken.",
                   "questions: only unresolved questions.",
                   "importantMoments: 1–3 turning points.",
-                  "participants: short display names.",
+                  "participants: empty array (do not invent names).",
                   "Return JSON only.",
                 ].join(" "),
               },
@@ -179,11 +179,13 @@ function notesToClaims(notes: MeetingNotes): Array<{ claim: string; evidence?: u
 
 function displaySpeaker(raw: string): string {
   const t = raw.trim().replace(/^\[|\]$/g, "").trim();
-  if (/^me$/i.test(t)) return "You";
-  if (/^them$/i.test(t)) return "Jordan";
+  if (/^me$/i.test(t) || /^you$/i.test(t)) return "You";
+  if (/^them$/i.test(t)) return "Them";
   const n = t.match(/^(?:speaker[_\s-]*)(\d+)$/i);
   if (n) return `Speaker ${Number(n[1])}`;
-  return t || "Unassigned";
+  // Keep labels generic — do not invent personal names.
+  if (/^speaker\s+[a-z0-9]+$/i.test(t)) return t.replace(/\b\w/g, (c) => c.toUpperCase());
+  return t || "Speaker";
 }
 
 function stripSpeaker(line: string): string {
@@ -214,9 +216,7 @@ export function syntheticNotes(transcript: string, mode: MeetingMode, title?: st
     return { line, i, speaker: raw ? displaySpeaker(raw) : undefined, body: stripSpeaker(line) };
   });
 
-  const participants = Array.from(
-    new Set(parsed.map((p) => p.speaker).filter((x): x is string => Boolean(x))),
-  );
+  const participants: string[] = [];
 
   const decisions = parsed
     .filter((p) => /decid|agreed|moved? to|will launch|decision\s*:/i.test(p.body))

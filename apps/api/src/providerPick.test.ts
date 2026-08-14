@@ -65,4 +65,10 @@ describe("providerPick", () => {
   it("lists every provider that failed", () => {
     expect(sttFallbackMessage(["pyai: empty transcript", "openai: 401"])).toContain("openai: 401");
   });
+
+  it("formats a UI-facing fallback note", async () => {
+    const { providerFallbackNote } = await import("./providerPick.js");
+    expect(providerFallbackNote("openai", ["pyai: timeout"])).toMatch(/Fell back to openai/);
+    expect(providerFallbackNote("openai", [])).toBeUndefined();
+  });
 });

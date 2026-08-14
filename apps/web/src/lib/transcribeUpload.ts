@@ -1,5 +1,6 @@
 import { api } from "@/lib/api";
 import { audioFileToSttChunks, displayFileName } from "@/lib/audio";
+import { formatFallbackNote } from "@/lib/fallback";
 import { normalizeDiarizedTranscript } from "@/lib/transcript";
 
 const UPLOAD_CONCURRENCY = 2;
@@ -12,9 +13,22 @@ export async function transcribeUploadedRecording(
     prompt?: string;
     onProgress?: (info: { part: number; total: number; label: string }) => void;
     /** Called after each finished part so the UI can show transcript immediately. */
-    onPartial?: (info: { text: string; part: number; total: number; provider: string }) => void;
+    onPartial?: (info: {
+      text: string;
+      part: number;
+      total: number;
+      provider: string;
+      fallback?: boolean;
+    }) => void;
   } = {},
-): Promise<{ text: string; provider: string; parts: number }> {
+): Promise<{
+  text: string;
+  provider: string;
+  parts: number;
+  fallback: boolean;
+  errors: string[];
+  fallbackNote?: string;
+}> {
   opts.onProgress?.({
     part: 0,
     total: 0,
@@ -23,6 +37,8 @@ export async function transcribeUploadedRecording(
   const chunks = await audioFileToSttChunks(file);
   const parts = new Array<string>(chunks.length).fill("");
   let provider = opts.provider ?? "unknown";
+  let fallback = false;
+  const errors: string[] = [];
   let done = 0;
   let cursor = 0;
 
@@ -37,6 +53,7 @@ export async function transcribeUploadedRecording(
       part: done,
       total: chunks.length,
       provider,
+      fallback,
     });
   };
 
@@ -58,6 +75,12 @@ export async function transcribeUploadedRecording(
       prompt: opts.prompt,
     });
     provider = out.provider;
+    if (out.fallback) fallback = true;
+    if (out.errors?.length) {
+      for (const e of out.errors) {
+        if (!errors.includes(e)) errors.push(e);
+      }
+    }
     const t = out.text?.trim();
     if (t) parts[i] = normalizeDiarizedTranscript(t);
     done += 1;
@@ -77,5 +100,12 @@ export async function transcribeUploadedRecording(
 
   const text = parts.filter(Boolean).join("\n");
   if (!text) throw new Error("No speech detected in that recording.");
-  return { text, provider, parts: chunks.length };
+  return {
+    text,
+    provider,
+    parts: chunks.length,
+    fallback,
+    errors,
+    fallbackNote: formatFallbackNote(provider, errors),
+  };
 }

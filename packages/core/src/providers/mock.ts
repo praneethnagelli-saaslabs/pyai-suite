@@ -182,7 +182,7 @@ function mockBriefNotes(source: string): Record<string, unknown> {
       lines
         .map((l) => l.match(/^([^:]+):/)?.[1]?.trim())
         .filter((x): x is string => Boolean(x))
-        .map((s) => (/^me$/i.test(s) ? "You" : /^them$/i.test(s) ? "Jordan" : s)),
+        .map((s) => (/^me$/i.test(s) ? "You" : /^them$/i.test(s) ? "Them" : s)),
     ),
   );
   const lower = source.toLowerCase();
@@ -191,7 +191,7 @@ function mockBriefNotes(source: string): Record<string, unknown> {
     source: "meeting",
     start: 12,
     end: 20,
-    speaker: speaker ?? "Jordan",
+    speaker: speaker ?? "Them",
     excerpt,
   });
   if (launch) {
@@ -199,7 +199,7 @@ function mockBriefNotes(source: string): Record<string, unknown> {
       title: "Launch planning",
       mode: "Planning",
       summary:
-        "The group decided to move the July launch to August while the security review stays open. Jordan will own the security pack by Friday. EU data residency is still an open question.",
+        "The group decided to move the July launch to August while the security review stays open. The security pack is owed by Friday. EU data residency is still an open question.",
       decisions: [
         {
           decision: "Move the product launch from July to August.",
@@ -208,10 +208,10 @@ function mockBriefNotes(source: string): Record<string, unknown> {
       ],
       actionItems: [
         {
-          owner: "Jordan",
+          owner: "Them",
           task: "Own the security pack",
           deadline: "Friday",
-          evidence: ev("I'll own the security pack by Friday.", "Jordan"),
+          evidence: ev("I'll own the security pack by Friday.", "Them"),
         },
       ],
       questions: [
@@ -222,9 +222,9 @@ function mockBriefNotes(source: string): Record<string, unknown> {
       ],
       importantMoments: [
         { moment: "Launch date slips to August", start: 8, end: 16 },
-        { moment: "Jordan takes the security pack", start: 16, end: 24 },
+        { moment: "Security pack taken on", start: 16, end: 24 },
       ],
-      participants: speakers.length ? speakers : ["You", "Jordan"],
+      participants: [],
     };
   }
   const first = lines[0]?.replace(/^[^:]+:\s*/, "") ?? "the discussion";
@@ -244,7 +244,7 @@ function mockBriefNotes(source: string): Record<string, unknown> {
       .slice(0, 3)
       .map((q) => ({ question: q.replace(/^[^:]+:\s*/, ""), evidence: ev(q) })),
     importantMoments: [{ moment: first.slice(0, 100), start: 0, end: 10 }],
-    participants: speakers.length ? speakers : ["You"],
+    participants: [],
   };
 }
 
@@ -335,7 +335,7 @@ function mockMeetingAnswer(source: string): Record<string, unknown> {
   }
   if (/security/.test(q) && /security/.test(hay)) {
     return {
-      answer: "Jordan owns the security pack, due Friday.",
+      answer: "The security pack is owed by Friday.",
       grounded: true,
     };
   }
