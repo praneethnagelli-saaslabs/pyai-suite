@@ -17,6 +17,44 @@ Use this for intros, judging rounds, and live demos. Swap **Team** if needed.
 
 ---
 
+## 1b. Built vs pulled in — say this before demos
+
+Judges reward teams that **built** the product, not teams that only restyled someone else’s. Using libraries, SDKs, and PyAI is expected. Own the line out loud.
+
+### What we built
+
+| Layer | Ours |
+|-------|------|
+| **Products** | CallIQ, Scrib, Brief, Simulator — workflows, UX, deal notes / cleanup / meeting memory / agent scoring |
+| **Platform glue** | Capability registry, PyAI-first provider routing, visible fallbacks, Mock path for demos without keys |
+| **Apps** | Fastify API, React web UI, Chrome extension, desktop Scrib tray, Docker Compose wiring |
+| **CallIQ bot path** | Join/upload/demo orchestration, transcript → Recap pipeline, evidence-style deal notes |
+| **Brief** | Tab + mic capture, End meeting → notes, past meetings + search memory |
+| **Scrib** | Hold-to-talk / extension / cleanup loop |
+| **Simulator** | Live/persona runs and scoring UI |
+
+### What we pulled in (not claiming we invented these)
+
+| Dependency | Role |
+|------------|------|
+| **PyAI** (Hear / Speak / APIs) | Primary voice STT/TTS — this hackathon’s stack |
+| **OpenAI / Gemini** (+ optional Anthropic) | Fallback STT and LLMs via adapters |
+| **Attendee** (open-source meeting bot) | The engine that joins Google Meet/Zoom as CallIQ Bot — we integrated and operated it, we did not rewrite Meet joining |
+| **Postgres, Redis, MinIO, Docker** | Persistence, jobs, recordings, local stack |
+| **React, Fastify, Tauri, Chrome MV3** | Standard app frameworks |
+
+### Script — say this in ~20 seconds
+
+**[SAY]**  
+“One thing upfront so it’s clear: **we built the four products and the shared platform around them** — the UI, workflows, provider registry, fallbacks, Brief capture, Scrib cleanup, CallIQ recap, Simulator scoring.
+
+**We did not invent the whole voice stack from scratch.** We stand on **PyAI** for Hear and Speak, **OpenAI/Gemini** as fallbacks, and **Attendee** — an open-source meeting bot — for joining Meet. Wiring those in, owning the product loop, and shipping four apps on one registry is what we built. Happy to go deep on any line in questions.”
+
+**Don’t say:** “We built a Meet bot from zero” if Attendee is doing the join.  
+**Do say:** “We integrated Attendee and built CallIQ on top — join → Hear → deal notes.”
+
+---
+
 ## 2. Product in one line
 
 **Suite**  
@@ -78,7 +116,7 @@ Provider order: **PyAI → OpenAI → Gemini → Mock**. The UI shows fallbacks 
 ### Suite pitch (45 sec)
 
 **[SAY]**  
-“Voice apps usually mean four separate integrations. We built **one capability registry** and four products on top.
+“Voice apps usually mean four separate integrations. We built **one capability registry** and four products on top — and, as we said, that sits on PyAI, open-source Attendee for Meet join, and normal infra.
 
 - **CallIQ** — leave a sales call with CRM-ready notes  
 - **Scrib** — speak once, paste clean text anywhere  
@@ -194,7 +232,8 @@ Open **Providers**.
 
 **Intro**  
 - Team: SaaS Labs  
-- Product: PyAI Suite (CallIQ · Scrib · Brief · Simulator)
+- Product: PyAI Suite (CallIQ · Scrib · Brief · Simulator)  
+- **Built vs pulled in:** we built products + registry; PyAI / Attendee / OpenAI are dependencies we integrated  
 
 **One-liners**  
 - CallIQ — sales call → deal notes  
@@ -203,11 +242,11 @@ Open **Providers**.
 - Simulator — practice / score voice agent  
 
 **Stack**  
-- PyAI: Hear, Speak, LLM  
-- Fallbacks: OpenAI, Gemini (+ optional Anthropic)  
-- 3rd party: Attendee, Google Meet, MinIO, Postgres, Redis, Docker  
+- Built: products, UI, workflows, provider routing, fallbacks  
+- Pulled in: PyAI Hear/Speak, OpenAI/Gemini, Attendee bot, Postgres/MinIO/Redis/Docker  
 
 **Demo**  
+0. Built vs pulled in (20 sec)  
 1. CallIQ → Run product demo  
 2. Scrib → Try demo  
 3. Brief → Sample demo  
@@ -225,7 +264,8 @@ Open **Providers**.
 
 | Block | Time |
 |-------|------|
-| Intro + one-liners + stack | 2 min |
+| Intro + **built vs pulled in** | 1–1.5 min |
+| One-liners + stack | 1 min |
 | CallIQ | 4–5 min |
 | Scrib | 2 min |
 | Brief | 2–3 min |
@@ -235,7 +275,7 @@ Open **Providers**.
 ### 60-second lightning version
 
 1. Team + suite one-liner  
-2. Four product one-liners  
-3. “Stack: PyAI Hear/Speak, OpenAI/Gemini fallback, Attendee, Postgres/MinIO”  
+2. **Built vs pulled in** (products + registry vs PyAI / Attendee / OpenAI)  
+3. Four product one-liners  
 4. CallIQ → **Run product demo** → show notes  
-5. “Same platform powers Scrib, Brief, Simulator — questions?”
+5. “Questions?”
