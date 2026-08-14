@@ -64,6 +64,8 @@ export interface TranscribeFallbackResult {
   fallback: boolean;
   /** Human-readable note when a later provider won after earlier tries failed. */
   fallbackNote?: string;
+  /** True when PyAI Hear was skipped because of an active cooldown (not a hard failure). */
+  hearCooldown?: boolean;
 }
 
 export type SttMode = "live" | "batch";
@@ -139,12 +141,24 @@ async function withBudget<T>(work: Promise<T>, ms: number, label: string): Promi
   }
 }
 
+function isRawWebm(audio: Uint8Array): boolean {
+  // EBML header — MediaRecorder webm/mkv. Hear rejects; Whisper accepts.
+  return (
+    audio.length >= 4 &&
+    audio[0] === 0x1a &&
+    audio[1] === 0x45 &&
+    audio[2] === 0xdf &&
+    audio[3] === 0xa3
+  );
+}
+
 /**
  * Try preferred → pyai → openai → gemini (→ mock). Empty transcripts count as
  * failure so a silent Hear miss still falls through to OpenAI.
  *
  * Live = short Hear budget; batch = long budget for uploads. After any Hear
  * timeout/error, skip Hear for a few minutes on *all* subsequent STT calls.
+ * Raw webm is skipped for PyAI (clients should convert; OpenAI still tried).
  */
 export async function transcribeWithFallback(
   platform: Platform,
@@ -158,10 +172,17 @@ export async function transcribeWithFallback(
   ).filter((id, i, arr) => arr.indexOf(id) === i);
 
   const errors: string[] = [];
+  let hearOnCooldown = false;
   const now = Date.now();
+  const rawWebm = isRawWebm(req.audio);
   for (const id of candidates) {
     if (id === "pyai" && now < pyaiSkipUntil) {
-      errors.push("pyai: skipped (recent Hear miss)");
+      // Expected while cooling down — do not treat as a failed attempt / UI "fallback".
+      hearOnCooldown = true;
+      continue;
+    }
+    if (id === "pyai" && rawWebm) {
+      // Avoid hard reject + error noise; OpenAI Whisper handles webm.
       continue;
     }
     const adapter = platform.registry.getAdapterFor(Capability.BATCH_STT, id);
@@ -176,7 +197,7 @@ export async function transcribeWithFallback(
       const result = await withBudget(
         adapter.asSTT().transcribe({
           audio: req.audio,
-          format: req.format ?? "wav",
+          format: req.format ?? (rawWebm ? "webm" : "wav"),
           prompt: req.prompt,
           diarize: Boolean(req.diarize) && (id === "openai" || id === "pyai"),
         }),
@@ -196,13 +217,20 @@ export async function transcribeWithFallback(
         errors,
         fallback,
         fallbackNote: fallback ? providerFallbackNote(id, errors) : undefined,
+        hearCooldown: hearOnCooldown || undefined,
       };
     } catch (e) {
       const msg = e instanceof Error ? e.message.slice(0, 160) : "failed";
       errors.push(`${id}: ${msg}`);
       if (id === "pyai") {
-        pyaiSkipUntil = Date.now() + PYAI_COOLDOWN_MS;
-        pyaiSkipReason = msg;
+        // Format / config mistakes are client issues — don't lock Hear out for 3 minutes.
+        const clientMistake =
+          /does not accept raw webm|empty audio|missing API key/i.test(msg);
+        if (!clientMistake) {
+          pyaiSkipUntil = Date.now() + PYAI_COOLDOWN_MS;
+          pyaiSkipReason = msg;
+        }
+        hearOnCooldown = !clientMistake;
       }
     }
   }

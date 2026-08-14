@@ -8,7 +8,7 @@ import { ErrorBanner } from "@/components/ErrorBanner";
 import { FallbackNotice } from "@/components/FallbackNotice";
 import { useToast } from "@/components/Toast";
 import { api } from "@/lib/api";
-import { ensureWavCompatible, fileToBase64 } from "@/lib/audio";
+import { prepareForStt } from "@/lib/audio";
 import { pickPreferred } from "@/lib/providers";
 
 type FinishResult = Awaited<ReturnType<typeof api.scribDemoFinish>>;
@@ -353,8 +353,9 @@ export function ScribPage() {
       setCompletedStageIds([]);
       try {
         const blob = new Blob(chunksRef.current, { type: mime?.split(";")[0] ?? "audio/webm" });
-        const file = await ensureWavCompatible(new File([blob], "recording.webm", { type: blob.type || "audio/webm" }));
-        const { audioBase64, audioFormat } = await fileToBase64(file);
+        const { audioBase64, audioFormat } = await prepareForStt(
+          new File([blob], "recording.webm", { type: blob.type || "audio/webm" }),
+        );
         if (audioBase64.length > 8_000_000) {
           throw new Error("Recording too long/large after encode. Hold for a shorter clip (under ~30s).");
         }

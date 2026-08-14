@@ -76,7 +76,7 @@ export class PyAIProvider implements ProviderAdapter {
         label: "PyAI Hear (STT)",
         capabilities: ["streaming_stt", "batch_stt", "speaker_diarization"],
         supportsStreaming: true,
-        audioFormats: ["wav", "mp3", "webm", "opus", "pcm"],
+        audioFormats: ["wav", "mp3", "m4a", "flac", "ogg"],
         maxInputSeconds: 3600,
         latencyClass: "low",
         pricing: { audioCostPerMinute: 0.006, currency: "USD" },

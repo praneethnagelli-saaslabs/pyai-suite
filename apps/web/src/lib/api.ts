@@ -139,6 +139,7 @@ export const api = {
       fallbackNote?: string;
       errors?: string[];
       mode?: "live" | "batch";
+      hearCooldown?: boolean;
     }>("/api/stt/transcribe", { method: "POST", body: JSON.stringify(body) }),
   analyzeCallIQ: (body: {
     transcriptText?: string;

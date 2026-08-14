@@ -13,7 +13,6 @@ import { formatFallbackNote } from "@/lib/fallback";
 import { pickPreferred, sortProviders } from "@/lib/providers";
 import {
   prepareForStt,
-  blobLooksSilent,
   isLikelySttHallucination,
   displayFileName,
 } from "@/lib/audio";
@@ -88,20 +87,35 @@ export function BriefPage() {
   const [meetStatus, setMeetStatus] = useState("");
   const [sharePhase, setSharePhase] = useState<SharePhase>("idle");
   const [captureSource, setCaptureSource] = useState<CaptureSource>(null);
+  /** Real Meet capture — tab (Them) and mic (Me) can run together. */
+  const [liveSources, setLiveSources] = useState({ tab: false, mic: false });
 
-  const mediaRef = useRef<MediaRecorder | null>(null);
-  const demoAbort = useRef(false);
-  const streamRef = useRef<MediaStream | null>(null);
-  const chunkQueue = useRef<Promise<void>>(Promise.resolve());
-  const segmentTimerRef = useRef<number | null>(null);
-  const stoppingRef = useRef(false);
-  const captureOptsRef = useRef<{ speakerLabel: string; diarize: boolean }>({
-    speakerLabel: "Them",
-    diarize: false,
+  type LiveLane = "tab" | "mic";
+  type LaneHandles = {
+    stream: MediaStream | null;
+    media: MediaRecorder | null;
+    timer: number | null;
+    audioCtx: AudioContext | null;
+  };
+  const emptyLane = (): LaneHandles => ({
+    stream: null,
+    media: null,
+    timer: null,
+    audioCtx: null,
   });
+  const lanesRef = useRef<Record<LiveLane, LaneHandles>>({
+    tab: emptyLane(),
+    mic: emptyLane(),
+  });
+  const demoAbort = useRef(false);
+  const chunkQueue = useRef<Promise<void>>(Promise.resolve());
+  const stoppingRef = useRef(false);
+  const transcriptRef = useRef("");
+  const pendingChunksRef = useRef(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const [pendingChunks, setPendingChunks] = useState(0);
 
   const llmOptions = useMemo(
     () =>
@@ -122,6 +136,19 @@ export function BriefPage() {
     [providers.data],
   );
 
+  function writeTranscript(next: string | ((prev: string) => string)) {
+    setTranscript((prev) => {
+      const value = typeof next === "function" ? next(prev) : next;
+      transcriptRef.current = value;
+      return value;
+    });
+  }
+
+  function bumpPending(delta: number) {
+    pendingChunksRef.current = Math.max(0, pendingChunksRef.current + delta);
+    setPendingChunks(pendingChunksRef.current);
+  }
+
   async function refreshMeetings(selectId?: string) {
     await queryClient.invalidateQueries({ queryKey: ["brief-meetings"] });
     if (selectId) setSelectedMeetingId(selectId);
@@ -136,7 +163,7 @@ export function BriefPage() {
     try {
       const m = await api.briefMeeting(id);
       setSelectedMeetingId(m.id);
-      setTranscript(m.transcript || "");
+      writeTranscript(m.transcript || "");
       if (m.mode) setMode(m.mode);
       setRecordingUrl(
         m.hasRecording ? m.recordingUrl || recordingPlayUrl("brief", m.id) : null,
@@ -203,9 +230,18 @@ export function BriefPage() {
       demoAbort.current = true;
       stoppingRef.current = true;
       stopDemoSpeech();
-      if (segmentTimerRef.current != null) window.clearInterval(segmentTimerRef.current);
-      mediaRef.current?.stop();
-      streamRef.current?.getTracks().forEach((t) => t.stop());
+      for (const lane of ["tab", "mic"] as const) {
+        const h = lanesRef.current[lane];
+        if (h.timer != null) window.clearInterval(h.timer);
+        try {
+          h.media?.stop();
+        } catch {
+          /* ignore */
+        }
+        h.stream?.getTracks().forEach((t) => t.stop());
+        void h.audioCtx?.close().catch(() => undefined);
+        lanesRef.current[lane] = emptyLane();
+      }
       if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
       void audioCtxRef.current?.close().catch(() => undefined);
     };
@@ -218,7 +254,7 @@ export function BriefPage() {
     setError(null);
     setResult(null);
     setSearch(null);
-    setTranscript("");
+    writeTranscript("");
     setCaptureNote(null);
     setFallbackNote(null);
     setDemoMode(null);
@@ -338,7 +374,7 @@ export function BriefPage() {
 
         await sleep(280);
         lines.push(turn.line);
-        setTranscript(lines.join("\n"));
+        writeTranscript(lines.join("\n"));
         setChunkBusy(false);
         setActiveSpeaker(null);
         setCaptureSource(null);
@@ -441,7 +477,7 @@ export function BriefPage() {
     setError(null);
     setBusy(true);
     setUploading(true);
-    setTranscript("");
+    writeTranscript("");
     setRecordingUrl(null);
     setFallbackNote(null);
     setCaptureNote(`Hear batch + diarize · ${displayFileName(file.name)}`);
@@ -463,7 +499,7 @@ export function BriefPage() {
           setStages((prev) => prev.map((s) => (s.id === "hear" ? { ...s, detail: label } : s)));
         },
         onPartial: ({ text, part, total, provider, fallback }) => {
-          setTranscript(text);
+          writeTranscript(text);
           setCaptureNote(
             total > 1
               ? `Transcript live · part ${part} of ${total} done`
@@ -490,7 +526,7 @@ export function BriefPage() {
       });
       const text = ((typeof out.transcript === "string" ? out.transcript : "") || heard.text).trim();
       if (!text) throw new Error("No speech detected in that recording.");
-      setTranscript(text);
+      writeTranscript(text);
       setCaptureNote(
         heard.fallback
           ? `Fell back to ${heard.provider}. Summary ready.`
@@ -586,7 +622,7 @@ export function BriefPage() {
   }
 
   function openMeet() {
-    setTranscript("");
+    writeTranscript("");
     setResult(null);
     setStages([]);
     setError(null);
@@ -595,21 +631,20 @@ export function BriefPage() {
     setCaptureNote("Meet opened. Join, then Capture Meet audio — share that Chrome tab with “Share tab audio” on. No bot joins the call.");
   }
 
-  async function processChunk(blob: Blob) {
-    if (blob.size < 1500) return;
-    const { speakerLabel } = captureOptsRef.current;
+  async function processChunk(blob: Blob, speakerLabel: string) {
+    if (stoppingRef.current && blob.size < 500) return;
+    if (blob.size < 800) return;
+    bumpPending(1);
     setChunkBusy(true);
     try {
-      // Near-silence → STT invents “you” / “thank you”. Skip before STT.
-      if (await blobLooksSilent(blob)) {
-        setCaptureNote(
-          "Quiet segment skipped — share the Meet Chrome Tab (not this PyAI tab) and turn on “Also share tab audio”.",
-        );
-        return;
-      }
+      // Always send live chunks to STT. Meet tab levels are often “quiet” by mic
+      // standards; a local silence gate was blocking real speech. Empty / filler
+      // transcripts are dropped after Hear returns.
       const file = new File([blob], "meet-chunk.webm", { type: blob.type || "audio/webm" });
-      const { audioBase64, audioFormat } = await prepareForStt(file, { preferWav: true });
+      // Complete webm segments → wav for PyAI Hear (same as Playground mic).
+      const { audioBase64, audioFormat } = await prepareForStt(file);
       if (audioBase64.length > 8_000_000) return;
+      setCaptureNote(`Hearing ${speakerLabel} via STT…`);
       const out = await api.sttTranscribe({
         audioBase64,
         format: audioFormat,
@@ -617,103 +652,212 @@ export function BriefPage() {
         diarize: false,
         speakerLabel,
         mode: "live",
-        prompt:
-          "Live Google Meet discussion. Label only Me or Them style turns. Transcribe clear speech only. If silent, return empty.",
+        // Vocabulary hint only — instructional prompts get echoed on quiet Them/tab audio.
+        prompt: "Meeting: roadmap, launch, security review, action items, follow-up, payment, access.",
       });
       const line = out.text.trim();
       if (!line || isLikelySttHallucination(line)) {
         setCaptureNote(
-          `Skipped filler STT (${out.provider}) — waiting for real speech. Keep Meet tab audio shared.`,
+          out.hearCooldown
+            ? `Listening (${out.provider}; Hear cooling down) — waiting for clear speech…`
+            : `Listening (${out.provider}) — waiting for clear speech…`,
         );
         return;
       }
-      setTranscript((prev) => {
+      writeTranscript((prev) => {
+        const content = line.replace(/^(me|them|you)\s*:\s*/i, "").trim().toLowerCase();
+        const recent = prev
+          .trim()
+          .split("\n")
+          .slice(-8)
+          .map((l) => l.replace(/^(me|them|you)\s*:\s*/i, "").trim().toLowerCase());
+        if (content && recent.includes(content)) return prev;
         const last = prev.trim().split("\n").pop()?.trim().toLowerCase() ?? "";
         if (last && last === line.toLowerCase()) return prev;
         return prev.trim() ? `${prev.trim()}\n${line}` : line;
       });
-      setCaptureNote(
-        out.fallback
-          ? formatFallbackNote(out.provider, out.errors, out.fallbackNote) ??
-              `Fell back to ${out.provider} · ${speakerLabel}`
-          : `Live STT via ${out.provider} · ${speakerLabel}: (Me/Them)…`,
-      );
+      setLiveCaption(line.slice(0, 160));
       if (out.fallback) {
+        // Real provider failure (timeout/empty), not Hear cooldown.
         setFallbackNote(
           formatFallbackNote(out.provider, out.errors, out.fallbackNote) ??
             `Fell back to ${out.provider}`,
         );
+        setCaptureNote(
+          formatFallbackNote(out.provider, out.errors, out.fallbackNote) ??
+            `Fell back to ${out.provider} · line added · ${speakerLabel}`,
+        );
+      } else if (out.hearCooldown) {
+        setCaptureNote(`Live STT via ${out.provider} (Hear cooling down) · line added · ${speakerLabel}`);
+      } else {
+        setCaptureNote(`Live STT via ${out.provider} · line added · ${speakerLabel}`);
+        setFallbackNote(null);
       }
       setError(null);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setCaptureNote(`Skipped a segment (${msg.slice(0, 80)}). Still listening…`);
     } finally {
-      setChunkBusy(false);
+      bumpPending(-1);
+      setChunkBusy(pendingChunksRef.current > 0);
     }
   }
 
+  function markLiveSources(patch: Partial<{ tab: boolean; mic: boolean }>) {
+    setLiveSources((prev) => {
+      const next = { ...prev, ...patch };
+      setCapturing(next.tab || next.mic);
+      return next;
+    });
+  }
+
+  async function stopLane(lane: LiveLane) {
+    const h = lanesRef.current[lane];
+    if (h.timer != null) {
+      window.clearInterval(h.timer);
+      h.timer = null;
+    }
+    const rec = h.media;
+    h.media = null;
+    if (rec && rec.state !== "inactive") {
+      await new Promise<void>((resolve) => {
+        rec.addEventListener("stop", () => resolve(), { once: true });
+        try {
+          rec.stop();
+        } catch {
+          resolve();
+        }
+        window.setTimeout(resolve, 800);
+      });
+    }
+    h.stream?.getTracks().forEach((t) => t.stop());
+    h.stream = null;
+    void h.audioCtx?.close().catch(() => undefined);
+    h.audioCtx = null;
+    lanesRef.current[lane] = emptyLane();
+    markLiveSources({ [lane]: false });
+  }
+
   async function beginRecording(
+    lane: LiveLane,
     stream: MediaStream,
     note: string,
-    opts: { speakerLabel: string; diarize: boolean; segmentMs?: number },
+    opts: { speakerLabel: string; segmentMs?: number },
   ) {
     const audioTracks = stream.getAudioTracks();
     if (!audioTracks.length) {
       stream.getTracks().forEach((t) => t.stop());
       throw new Error("NO_AUDIO_TRACK");
     }
-    captureOptsRef.current = { speakerLabel: opts.speakerLabel, diarize: opts.diarize };
-    streamRef.current = stream;
+
+    // Replace this lane only — leave the other source running.
+    await stopLane(lane);
+
     stoppingRef.current = false;
     const audioOnly = new MediaStream(audioTracks);
+    const handles = emptyLane();
+    handles.stream = stream;
+
+    // Chrome tab capture sometimes stays silent unless an AudioContext taps the stream.
+    try {
+      const Ctx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const ctx = new Ctx();
+      handles.audioCtx = ctx;
+      const src = ctx.createMediaStreamSource(audioOnly);
+      const mute = ctx.createGain();
+      mute.gain.value = 0;
+      src.connect(mute);
+      mute.connect(ctx.destination);
+      void ctx.resume();
+    } catch {
+      /* recorder still works without the tap */
+    }
+
+    const liveTrack = audioTracks[0];
+    if (lane === "tab" && liveTrack?.muted) {
+      setCaptureNote(
+        "Browser reports the share track as muted — re-share Meet with “Also share tab audio” on.",
+      );
+    }
     const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
       ? "audio/webm;codecs=opus"
       : MediaRecorder.isTypeSupported("audio/webm")
         ? "audio/webm"
         : undefined;
-    // Longer chunks help diarization; shorter for mic-only.
-    const segmentMs = opts.segmentMs ?? (opts.diarize ? 15_000 : 5_000);
+    // Complete webm per slice (stop → flush → restart). Timeslice fragments are not
+    // valid standalone files and fail decode / often fail Whisper.
+    const segmentMs = opts.segmentMs ?? 4_000;
+    const speakerLabel = opts.speakerLabel;
 
     const startSegment = () => {
-      if (stoppingRef.current || !streamRef.current) return;
+      if (stoppingRef.current || !handles.stream) return;
       const rec = new MediaRecorder(audioOnly, mime ? { mimeType: mime } : undefined);
-      mediaRef.current = rec;
+      handles.media = rec;
+      const parts: Blob[] = [];
       rec.ondataavailable = (e) => {
-        if (!e.data.size) return;
-        chunkQueue.current = chunkQueue.current.then(() => processChunk(e.data)).catch(() => undefined);
+        if (e.data.size) parts.push(e.data);
       };
       rec.onerror = () => {
-        setCaptureNote("Recorder hiccup — restarting segment…");
+        setCaptureNote("Recorder hiccup — keep speaking; still listening…");
+      };
+      rec.onstop = () => {
+        const blob = new Blob(parts, { type: mime || "audio/webm" });
+        if (blob.size >= 800 && !stoppingRef.current) {
+          chunkQueue.current = chunkQueue.current
+            .then(() => processChunk(blob, speakerLabel))
+            .catch(() => undefined);
+        }
+        if (!stoppingRef.current && handles.stream) {
+          window.setTimeout(startSegment, 40);
+        }
       };
       try {
         rec.start();
       } catch {
-        return;
+        setCaptureNote("Could not start audio recorder — try Capture again.");
       }
     };
 
     startSegment();
-    segmentTimerRef.current = window.setInterval(() => {
-      const rec = mediaRef.current;
+    handles.timer = window.setInterval(() => {
+      const rec = handles.media;
+      if (stoppingRef.current) return;
       if (!rec || rec.state !== "recording") {
         startSegment();
         return;
       }
       try {
-        rec.stop();
+        rec.stop(); // onstop queues STT and starts the next segment
       } catch {
-        /* ignore */
+        startSegment();
       }
-      window.setTimeout(() => startSegment(), 40);
     }, segmentMs);
 
+    lanesRef.current[lane] = handles;
     for (const track of stream.getTracks()) {
       track.addEventListener("ended", () => {
-        void stopMeetCapture();
+        void (async () => {
+          await stopLane(lane);
+          const other: LiveLane = lane === "tab" ? "mic" : "tab";
+          if (!lanesRef.current[other].stream) {
+            setCaptureNote(
+              transcriptRef.current.trim()
+                ? "Capture stopped. Review transcript, then End meeting → notes."
+                : "Capture stopped — no speech transcribed yet.",
+            );
+          } else {
+            setCaptureNote(
+              lane === "tab"
+                ? "Meet tab share ended — mic still capturing you as Me:."
+                : "Mic stopped — Meet tab still capturing Them:.",
+            );
+          }
+        })();
       });
     }
-    setCapturing(true);
+    markLiveSources({ [lane]: true });
     setError(null);
     setCaptureNote(note);
   }
@@ -722,27 +866,46 @@ export function BriefPage() {
     setError(null);
     setResult(null);
     setStages([]);
-    setTranscript("");
+    setFallbackNote(null);
+    setSharePhase("idle");
+    setMeetPhase("idle");
+    setCaptureSource(null);
+    const micAlready = Boolean(lanesRef.current.mic.stream);
+    if (!micAlready) {
+      writeTranscript("");
+      setPendingChunks(0);
+      pendingChunksRef.current = 0;
+    }
     setCaptureNote(null);
     try {
       const display = await navigator.mediaDevices.getDisplayMedia({
         video: {
           displaySurface: "browser",
         } as MediaTrackConstraints,
-        audio: true,
+        audio: {
+          // Chrome: keep tab audio flowing into the captured stream.
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        } as MediaTrackConstraints,
         ...({
           preferCurrentTab: false,
-          selfBrowserSurface: "include",
+          selfBrowserSurface: "exclude",
           surfaceSwitching: "include",
           systemAudio: "include",
+          // Chromium: do not mute the shared tab in the user's speakers.
+          suppressLocalAudioPlayback: false,
         } as Record<string, unknown>),
       });
 
       try {
         await beginRecording(
+          "tab",
           display,
-          "Capturing Meet tab audio as Them: (others). Mic capture uses Me:.",
-          { speakerLabel: "Them", diarize: false, segmentMs: 5_000 },
+          micAlready
+            ? "Meet tab = Them: · mic already on for Me:. Switch to Brief and let the call run."
+            : "Meet tab = Them:. Asking for microphone so your speech is Me:…",
+          { speakerLabel: "Them", segmentMs: 4_000 },
         );
       } catch (e) {
         display.getTracks().forEach((t) => t.stop());
@@ -750,10 +913,21 @@ export function BriefPage() {
           setError(
             "That share had no audio. In Chrome’s picker: choose “Chrome Tab” → select the Meet tab → turn ON “Also share tab audio”. Window/Entire Screen usually won’t capture Meet sound on Mac.",
           );
-          setCaptureNote("Tip: use Having trouble? → Capture microphone for your voice only (labeled You).");
+          setCaptureNote("Tip: use Also capture my mic for your voice (Me:), or paste/type that part.");
           return;
         }
         throw e;
+      }
+
+      // Same user-gesture chain as tab share — start mic so Me: is captured too.
+      if (!micAlready && !lanesRef.current.mic.stream) {
+        try {
+          await startMicCapture({ preserveSession: true });
+        } catch {
+          setCaptureNote(
+            "Meet tab is capturing Them:. Click the Microphone card (or Also capture my mic) to add Me:.",
+          );
+        }
       }
     } catch (e) {
       if (e instanceof DOMException && e.name === "NotAllowedError") {
@@ -764,58 +938,76 @@ export function BriefPage() {
     }
   }
 
-  async function startMicCapture() {
+  async function startMicCapture(opts?: { preserveSession?: boolean }) {
     setError(null);
-    setResult(null);
-    setStages([]);
-    setTranscript("");
+    setSharePhase("idle");
+    setMeetPhase("idle");
+    setCaptureSource(null);
+    if (!opts?.preserveSession) {
+      setResult(null);
+      setStages([]);
+      setFallbackNote(null);
+    }
+    const tabAlready = Boolean(lanesRef.current.tab.stream);
+    if (!tabAlready && !opts?.preserveSession) {
+      writeTranscript("");
+      setPendingChunks(0);
+      pendingChunksRef.current = 0;
+    }
     try {
       const mic = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
+          autoGainControl: true,
         },
       });
       await beginRecording(
+        "mic",
         mic,
-        "Capturing microphone as Me:. Others need Meet tab capture (Them:).",
-        { speakerLabel: "Me", diarize: false, segmentMs: 5_000 },
+        tabAlready || opts?.preserveSession
+          ? "Mic = Me: · Meet tab = Them:. Both sources are live — speak normally."
+          : "Mic = Me:. For others on the call, also Capture Meet audio (tab share).",
+        { speakerLabel: "Me", segmentMs: 4_000 },
       );
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Microphone permission denied.");
+      const msg =
+        e instanceof DOMException && e.name === "NotAllowedError"
+          ? "Microphone permission denied. Allow mic for this site, then click the Microphone card."
+          : e instanceof Error
+            ? e.message
+            : "Microphone permission denied.";
+      setError(msg);
+      if (opts?.preserveSession) throw e instanceof Error ? e : new Error(msg);
     }
   }
 
   async function stopMeetCapture() {
     stoppingRef.current = true;
-    if (segmentTimerRef.current != null) {
-      window.clearInterval(segmentTimerRef.current);
-      segmentTimerRef.current = null;
-    }
-    const rec = mediaRef.current;
-    mediaRef.current = null;
-    if (rec && rec.state !== "inactive") {
-      await new Promise<void>((resolve) => {
-        rec.addEventListener("stop", () => resolve(), { once: true });
-        try {
-          rec.stop();
-        } catch {
-          resolve();
-        }
-        window.setTimeout(resolve, 500);
-      });
-    }
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
+    await Promise.all([stopLane("tab"), stopLane("mic")]);
     setCapturing(false);
+    setLiveSources({ tab: false, mic: false });
+    setCaptureNote("Finishing last audio chunks…");
     await chunkQueue.current;
-    setCaptureNote((n) => n?.includes("Still listening") ? "Capture stopped. Review transcript, then End meeting → notes." : (n ?? "Capture stopped. Review transcript, then End meeting → notes."));
+    setChunkBusy(false);
+    setPendingChunks(0);
+    pendingChunksRef.current = 0;
+    setCaptureNote(
+      transcriptRef.current.trim()
+        ? "Capture stopped. Review transcript, then End meeting → notes."
+        : "Capture stopped — no speech transcribed. Share Meet tab audio and try again, or paste a transcript.",
+    );
   }
 
   async function endMeetingNotes() {
     if (sharePhase !== "idle") stopDemoCapture();
-    else await stopMeetCapture();
-    await analyze(transcript);
+    else if (capturing || liveSources.tab || liveSources.mic) await stopMeetCapture();
+    const text = transcriptRef.current.trim();
+    if (!text) {
+      setError("No transcript yet. Keep Meet tab audio shared until lines appear, then try again.");
+      return;
+    }
+    await analyze(text);
   }
 
   return (
@@ -864,10 +1056,16 @@ export function BriefPage() {
             />
             <Button
               variant="ghost"
-              disabled={busy || capturing || !transcript.trim()}
-              onClick={() => void (capturing ? endMeetingNotes() : analyze())}
+              disabled={busy || (!capturing && !transcript.trim())}
+              onClick={() => void endMeetingNotes()}
             >
-              {busy ? "Summarizing…" : "End meeting → notes"}
+              {busy
+                ? "Summarizing…"
+                : capturing
+                  ? pendingChunks > 0
+                    ? `End meeting (${pendingChunks}…)`
+                    : "End meeting → notes"
+                  : "End meeting → notes"}
             </Button>
           </div>
         }
@@ -889,11 +1087,24 @@ export function BriefPage() {
       ) : null}
 
       <SimulatedSharePicker phase={sharePhase} meetTitle="Launch planning" />
-      {sharePhase === "capturing" || sharePhase === "done" ? (
+      {sharePhase === "capturing" || sharePhase === "done" || liveSources.tab || liveSources.mic ? (
         <CaptureSourcesHud
-          active={captureSource}
-          transcribing={chunkBusy && sharePhase === "capturing"}
+          sources={{
+            tab: liveSources.tab || captureSource === "tab",
+            mic: liveSources.mic || captureSource === "mic",
+          }}
+          transcribing={chunkBusy && (sharePhase === "capturing" || liveSources.tab || liveSources.mic)}
           note={captureNote}
+          onStartMic={
+            !liveSources.mic && sharePhase === "idle"
+              ? () => void startMicCapture()
+              : undefined
+          }
+          onStartTab={
+            !liveSources.tab && sharePhase === "idle"
+              ? () => void startMeetCapture()
+              : undefined
+          }
         />
       ) : null}
 
@@ -903,28 +1114,16 @@ export function BriefPage() {
             <h2 className="flex items-center gap-2 text-sm font-semibold">
               Live Google Meet (no bot)
               {capturing ? <RecDot label="Listening" /> : null}
+              {capturing && (chunkBusy || pendingChunks > 0) ? (
+                <span className="font-mono text-[10px] font-normal text-ink-400">
+                  transcribing{pendingChunks > 1 ? ` · ${pendingChunks} queued` : "…"}
+                </span>
+              ) : null}
             </h2>
             <p className="mt-1 max-w-xl text-xs text-ink-500">
-              Join Meet in Chrome
-              {meetUrl.trim() ? (
-                <>
-                  {" "}
-                  (
-                  <button
-                    type="button"
-                    className="font-medium text-ink-700 underline underline-offset-2"
-                    onClick={openMeet}
-                  >
-                    open link
-                  </button>
-                  )
-                </>
-              ) : null}
-              , then capture the Meet tab with audio — or use the Chrome extension
-              popup (<span className="font-medium text-ink-700">Capture this Meet in Brief</span>
-              ). Transcript labels{" "}
-              <span className="font-medium text-ink-700">Me:</span> (mic) and{" "}
-              <span className="font-medium text-ink-700">Them:</span> (tab).
+              Capture Meet tab for <span className="font-medium text-ink-700">Them:</span> — Brief then
+              asks for your mic as <span className="font-medium text-ink-700">Me:</span>. Both can run
+              together; click an idle card to start a missing source.
             </p>
             <button
               type="button"
@@ -934,11 +1133,23 @@ export function BriefPage() {
               {showCaptureHelp ? "Hide how to share tab audio" : "How to share tab audio"}
             </button>
           </div>
-          {capturing ? (
-            <Button type="button" size="sm" disabled={busy || chunkBusy} onClick={() => void endMeetingNotes()}>
-              End meeting → notes
-            </Button>
-          ) : null}
+          <div className="flex flex-wrap gap-2">
+            {liveSources.tab && !liveSources.mic ? (
+              <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => void startMicCapture()}>
+                Also capture my mic
+              </Button>
+            ) : null}
+            {liveSources.mic && !liveSources.tab ? (
+              <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => void startMeetCapture()}>
+                Also capture Meet tab
+              </Button>
+            ) : null}
+            {capturing ? (
+              <Button type="button" size="sm" disabled={busy} onClick={() => void endMeetingNotes()}>
+                {pendingChunks > 0 ? `End meeting (${pendingChunks} processing…)` : "End meeting → notes"}
+              </Button>
+            ) : null}
+          </div>
         </div>
 
         {showCaptureHelp ? (
@@ -953,6 +1164,10 @@ export function BriefPage() {
                 <span className="font-medium text-ink-700">Also share tab audio</span>.
               </li>
               <li>
+                Switch back to Brief — others’ speech lands as Them:. Add mic for your words (Me:), or
+                paste/type that part.
+              </li>
+              <li>
                 On Mac, Window / Entire Screen often has no Meet sound — tab share is required.
               </li>
             </ol>
@@ -960,26 +1175,31 @@ export function BriefPage() {
               type="button"
               variant="secondary"
               size="sm"
-              disabled={busy || capturing}
+              disabled={busy || liveSources.mic}
               onClick={() => void startMicCapture()}
             >
-              Capture microphone only
+              {liveSources.tab ? "Also capture my mic" : "Capture microphone only"}
             </Button>
           </div>
         ) : null}
 
         <div>
           <Label>Meet link (optional)</Label>
-          <Input
-            value={meetUrl}
-            onChange={(e) => setMeetUrl(e.target.value)}
-            placeholder="https://meet.google.com/xxx-xxxx-xxx"
-          />
+          <div className="flex gap-2">
+            <Input
+              value={meetUrl}
+              onChange={(e) => setMeetUrl(e.target.value)}
+              placeholder="https://meet.google.com/xxx-xxxx-xxx"
+            />
+            <Button type="button" variant="secondary" size="sm" onClick={openMeet}>
+              Open
+            </Button>
+          </div>
         </div>
-        {captureNote && sharePhase === "idle" ? (
+        {captureNote ? (
           <p className="font-mono text-[11px] text-ink-500">
             {captureNote}
-            {chunkBusy ? " · transcribing…" : ""}
+            {capturing && pendingChunks > 1 ? ` · ${pendingChunks} chunks queued` : ""}
           </p>
         ) : null}
         <FallbackNotice note={fallbackNote} />
@@ -991,7 +1211,7 @@ export function BriefPage() {
                 Try tab share again
               </Button>
               <Button type="button" variant="secondary" size="sm" onClick={() => void startMicCapture()}>
-                Use microphone instead
+                {liveSources.tab ? "Also capture my mic" : "Use microphone instead"}
               </Button>
             </div>
           </div>
@@ -1063,7 +1283,7 @@ export function BriefPage() {
             <Label>Live / imported transcript</Label>
             <Textarea
               value={transcript}
-              onChange={(e) => setTranscript(e.target.value)}
+              onChange={(e) => writeTranscript(e.target.value)}
               className="min-h-[260px] font-mono text-sm"
               placeholder="Capture a Meet, upload a recording, paste a transcript, or try the sample demo."
             />

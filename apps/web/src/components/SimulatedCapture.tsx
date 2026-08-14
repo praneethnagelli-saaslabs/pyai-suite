@@ -68,13 +68,23 @@ export function SimulatedSharePicker({
 /** Live tab + mic capture meters — mirrors real Brief capture sources. */
 export function CaptureSourcesHud({
   active,
+  sources,
   transcribing,
   note,
+  onStartMic,
+  onStartTab,
 }: {
-  active: CaptureSource;
+  /** Demo / single-source highlight (legacy). Prefer `sources` for live dual capture. */
+  active?: CaptureSource;
+  sources?: { tab: boolean; mic: boolean };
   transcribing?: boolean;
   note?: string | null;
+  /** When mic is idle, card click starts mic capture. */
+  onStartMic?: () => void;
+  onStartTab?: () => void;
 }) {
+  const tabOn = sources?.tab ?? active === "tab";
+  const micOn = sources?.mic ?? active === "mic";
   return (
     <div className="mb-5 space-y-2">
       <div className="grid gap-2 sm:grid-cols-2">
@@ -82,23 +92,22 @@ export function CaptureSourcesHud({
           title="Chrome tab audio"
           label="Them"
           hint="Meet tab · others on the call"
-          active={active === "tab"}
-          transcribing={transcribing && active === "tab"}
+          active={tabOn}
+          transcribing={Boolean(transcribing && tabOn)}
+          onActivate={!tabOn ? onStartTab : undefined}
+          idleAction={!tabOn && onStartTab ? "Click to share Meet tab" : undefined}
         />
         <SourceCard
           title="Microphone"
           label="Me"
           hint="Your mic · this browser"
-          active={active === "mic"}
-          transcribing={transcribing && active === "mic"}
+          active={micOn}
+          transcribing={Boolean(transcribing && micOn)}
+          onActivate={!micOn ? onStartMic : undefined}
+          idleAction={!micOn && onStartMic ? "Click to capture your voice" : undefined}
         />
       </div>
-      {note ? (
-        <p className="font-mono text-[11px] text-ink-500">
-          {note}
-          {transcribing ? " · transcribing…" : ""}
-        </p>
-      ) : null}
+      {note ? <p className="font-mono text-[11px] text-ink-500">{note}</p> : null}
     </div>
   );
 }
@@ -109,18 +118,28 @@ function SourceCard({
   hint,
   active,
   transcribing,
+  onActivate,
+  idleAction,
 }: {
   title: string;
   label: string;
   hint: string;
   active: boolean;
   transcribing?: boolean;
+  onActivate?: () => void;
+  idleAction?: string;
 }) {
+  const clickable = Boolean(onActivate);
   return (
-    <div
+    <button
+      type="button"
+      disabled={!clickable}
+      onClick={() => onActivate?.()}
       className={cn(
-        "rounded-xl border px-3 py-3 transition",
+        "rounded-xl border px-3 py-3 text-left transition",
         active ? "border-accent/40 bg-accent/5" : "border-ink-100 bg-ink-50/60",
+        clickable && "cursor-pointer hover:border-accent/50 hover:bg-accent/5",
+        !clickable && "cursor-default",
       )}
     >
       <div className="flex items-center justify-between gap-2">
@@ -150,6 +169,9 @@ function SourceCard({
         ))}
         <span className="ml-2 text-[11px] font-medium text-ink-600">{label}:</span>
       </div>
-    </div>
+      {idleAction ? (
+        <p className="mt-2 text-[11px] font-medium text-accent">{idleAction}</p>
+      ) : null}
+    </button>
   );
 }

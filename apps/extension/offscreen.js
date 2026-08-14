@@ -40,7 +40,7 @@ async function stop() {
   const rec = mediaRecorder;
   if (!rec || rec.state === "inactive") {
     reset();
-    return { audioBase64: "", format: "webm" };
+    return { audioBase64: "", format: "wav" };
   }
   const blob = await new Promise((resolve) => {
     rec.onstop = () => {
@@ -49,7 +49,10 @@ async function stop() {
     rec.stop();
   });
   reset();
-  if (!blob.size) return { audioBase64: "", format: "webm" };
+  if (!blob.size) return { audioBase64: "", format: "wav" };
+  if (globalThis.PyaiWav?.blobToSttPayload) {
+    return globalThis.PyaiWav.blobToSttPayload(blob);
+  }
   return { audioBase64: await blobToBase64(blob), format: "webm" };
 }
 

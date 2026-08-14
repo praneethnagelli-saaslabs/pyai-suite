@@ -25,8 +25,8 @@ export async function ensureWavCompatible(file: File): Promise<File> {
 
 /**
  * Prepare audio for /api/stt/transcribe.
- * Live Meet chunks should be complete webm blobs — we upload them as webm (OpenAI accepts it)
- * and avoid decodeAudioData, which fails on MediaRecorder timeslice fragments.
+ * PyAI Hear rejects raw MediaRecorder webm — convert complete segments to wav by default.
+ * If decode fails (rare incomplete fragment), fall back to webm for OpenAI Whisper.
  */
 export async function prepareForStt(
   file: File,
@@ -37,23 +37,27 @@ export async function prepareForStt(
   const isWebm =
     type.includes("webm") || name.endsWith(".webm") || type.includes("ogg") || name.endsWith(".ogg");
 
-  if (isWebm && !opts?.preferWav) {
-    return fileToBase64(file);
-  }
+  // Default on — Hear needs wav/mp3; complete stop→restart webm segments decode in Chrome.
+  const preferWav = opts?.preferWav !== false;
 
-  if (isWebm && opts?.preferWav) {
-    const wav = await ensureWavCompatible(file);
-    return fileToBase64(wav);
+  if (isWebm && preferWav) {
+    try {
+      const wav = await ensureWavCompatible(file);
+      return fileToBase64(wav);
+    } catch {
+      return fileToBase64(file);
+    }
   }
 
   return fileToBase64(file);
 }
 
 /**
- * True when the blob is near-silence (common when the wrong tab is shared or tab audio is off).
- * Whisper often hallucinates “you” / “thank you” on those chunks.
+ * True when the blob is near-digital silence (wrong tab / tab audio off).
+ * Keep the threshold low — Meet tab capture is often quiet vs a mic and used to
+ * get false “quiet skipped” before speech ever reached STT.
  */
-export async function blobLooksSilent(blob: Blob, minMeanAbs = 0.012): Promise<boolean> {
+export async function blobLooksSilent(blob: Blob, minMeanAbs = 0.0015): Promise<boolean> {
   const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
   const ctx = new Ctx();
   try {
@@ -62,12 +66,18 @@ export async function blobLooksSilent(blob: Blob, minMeanAbs = 0.012): Promise<b
     if (!ch.length) return true;
     const step = Math.max(1, Math.floor(ch.length / 12_000));
     let sum = 0;
+    let peak = 0;
     let n = 0;
     for (let i = 0; i < ch.length; i += step) {
-      sum += Math.abs(ch[i] ?? 0);
+      const v = Math.abs(ch[i] ?? 0);
+      sum += v;
+      if (v > peak) peak = v;
       n++;
     }
-    return n === 0 || sum / n < minMeanAbs;
+    if (n === 0) return true;
+    const mean = sum / n;
+    // Need both low average and tiny peak — quiet Meet speech can have low mean.
+    return mean < minMeanAbs && peak < minMeanAbs * 8;
   } catch {
     return false; // undecodable — still send to STT
   } finally {
@@ -75,14 +85,19 @@ export async function blobLooksSilent(blob: Blob, minMeanAbs = 0.012): Promise<b
   }
 }
 
-/** Whisper silence / YouTube-trailer style hallucinations. */
+/** Whisper silence / prompt-echo / YouTube-trailer style hallucinations. */
 export function isLikelySttHallucination(text: string): boolean {
-  const t = text
+  const raw = text.trim();
+  if (!raw) return true;
+  // Drop speaker prefixes added by live Brief (Me:/Them:) before judging content.
+  const t = raw
+    .replace(/^(me|them|you|speaker\s*\d+)\s*:\s*/i, "")
     .trim()
     .toLowerCase()
     .replace(/[“”"']/g, "")
     .replace(/\s+/g, " ");
   if (!t) return true;
+
   const exact = new Set([
     "you",
     "you.",
@@ -104,11 +119,28 @@ export function isLikelySttHallucination(text: string): boolean {
     "uh",
     "um",
     "hmm",
+    "transcribe clear speech only",
+    "transcribe clear speech only.",
+    "if silent, return empty",
+    "if silent return empty",
+    "return an empty string",
+    "return empty",
   ]);
   if (exact.has(t)) return true;
   if (/^(you[.!]?\s*)+$/i.test(t)) return true;
   if (/^(thank you[.!]?\s*)+$/i.test(t)) return true;
   if (/^(thanks for watching[.!]?\s*)+$/i.test(t)) return true;
+  // Prompt / instruction echoes (Whisper often repeats these on quiet audio).
+  if (
+    /transcribe\s+(clear\s+)?speech/i.test(t) ||
+    /if\s+(there\s+is\s+)?no\s+speech/i.test(t) ||
+    /return\s+(an\s+)?empty/i.test(t) ||
+    /label\s+only\s+(me|them)/i.test(t) ||
+    /live\s+google\s+meet/i.test(t) ||
+    /^speakers?:\s*$/i.test(t)
+  ) {
+    return true;
+  }
   return false;
 }
 

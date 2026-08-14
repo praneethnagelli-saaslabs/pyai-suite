@@ -40,7 +40,8 @@ export async function sttRoutes(app: FastifyInstance, svc: AppServices): Promise
     const t0 = Date.now();
     const prompt =
       req.body.prompt?.trim() ||
-      "Live Google Meet conversation with multiple speakers discussing work. Transcribe speech only; if there is no speech, return an empty string.";
+      // Vocabulary hint only — Whisper may echo instructional prompts on quiet audio.
+      "Meeting discussion: roadmap, launch, security review, action items, follow-up.";
     const fallbackLabel = req.body.speakerLabel?.trim();
 
     try {
@@ -55,13 +56,18 @@ export async function sttRoutes(app: FastifyInstance, svc: AppServices): Promise
         preferred,
         { includeMock: false, mode },
       );
-      let text = heard.text;
+      let text = heard.text.trim();
+      // Drop prompt-echo lines before labeling.
+      if (isPromptEcho(text)) {
+        text = "";
+      }
       const hasSpeakerLines = /(?:^|\n)\s*(?:\[[^\]]+\]|[A-Za-z][^:\n]{0,48}:)\s+\S/.test(text);
-      if (fallbackLabel && !hasSpeakerLines) {
+      if (fallbackLabel && text && !hasSpeakerLines) {
         text = text
           .split("\n")
           .map((line) => line.trim())
           .filter(Boolean)
+          .filter((line) => !isPromptEcho(line))
           .map((line) => `${fallbackLabel}: ${line}`)
           .join("\n");
       }
@@ -75,6 +81,7 @@ export async function sttRoutes(app: FastifyInstance, svc: AppServices): Promise
         fallbackNote: heard.fallbackNote,
         errors: heard.errors.length ? heard.errors : undefined,
         mode,
+        hearCooldown: heard.hearCooldown,
       };
     } catch (e) {
       const errors =
@@ -85,4 +92,23 @@ export async function sttRoutes(app: FastifyInstance, svc: AppServices): Promise
       });
     }
   });
+}
+
+/** Quiet-audio models often echo STT prompt instructions verbatim. */
+function isPromptEcho(text: string): boolean {
+  const t = text
+    .replace(/^(me|them|you|speaker\s*\d+)\s*:\s*/i, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+  if (!t) return true;
+  return (
+    /transcribe\s+(clear\s+)?speech/i.test(t) ||
+    /if\s+(there\s+is\s+)?no\s+speech/i.test(t) ||
+    /return\s+(an\s+)?empty/i.test(t) ||
+    /label\s+only\s+(me|them)/i.test(t) ||
+    /live\s+google\s+meet/i.test(t) ||
+    t === "transcribe clear speech only" ||
+    t === "transcribe clear speech only."
+  );
 }

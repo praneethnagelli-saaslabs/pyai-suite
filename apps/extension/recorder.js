@@ -49,13 +49,27 @@ async function finishRec() {
   }
   setStatus("Transcribing…");
   const blob = new Blob(chunks, { type: "audio/webm" });
-  const buf = await blob.arrayBuffer();
-  const bytes = new Uint8Array(buf);
-  let binary = "";
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-  const audioBase64 = btoa(binary);
+  const payload = globalThis.PyaiWav?.blobToSttPayload
+    ? await globalThis.PyaiWav.blobToSttPayload(blob)
+    : (() => {
+        // Fallback if wav-encode.js missing — OpenAI may still accept webm.
+        return null;
+      })();
+  let audioBase64;
+  let format;
+  if (payload) {
+    audioBase64 = payload.audioBase64;
+    format = payload.format;
+  } else {
+    const buf = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    audioBase64 = btoa(binary);
+    format = "webm";
+  }
   chrome.runtime.sendMessage(
-    { type: "scrib.transcribe", audioBase64, format: "webm", appName: "browser" },
+    { type: "scrib.transcribe", audioBase64, format, appName: "browser" },
     (res) => {
       if (chrome.runtime.lastError) {
         setStatus(`Error: ${chrome.runtime.lastError.message}`, true);

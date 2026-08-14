@@ -73,9 +73,19 @@ export class OpenAIProvider implements ProviderAdapter {
     const key = this.key;
     return {
       transcribe: async (req: STTRequest): Promise<TranscriptResult> => {
-        const format = req.format ?? "wav";
+        const format = (req.format ?? "wav").toLowerCase();
         const mime =
-          format === "mp3" ? "audio/mpeg" : format === "webm" ? "audio/webm" : format === "ogg" || format === "opus" ? "audio/ogg" : "audio/wav";
+          format === "mp3" || format === "mpeg" || format === "mpga"
+            ? "audio/mpeg"
+            : format === "webm"
+              ? "audio/webm"
+              : format === "ogg" || format === "opus"
+                ? "audio/ogg"
+                : format === "m4a" || format === "mp4" || format === "aac"
+                  ? "audio/mp4"
+                  : format === "flac"
+                    ? "audio/flac"
+                    : "audio/wav";
         const fileBlob = new Blob([toArrayBuffer(req.audio)], { type: mime });
 
         // gpt-4o-transcribe-diarize is slow on short Meet slices — use whisper-1 there.
