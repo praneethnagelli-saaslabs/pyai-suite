@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PyAI Suite — Demo Deck</title>
+  <style>
+    :root {
+      --bg: #12161c;
+      --fg: #e8ecf1;
+      --muted: #9aa3b0;
+      --accent: #2fa38a;
+      --card: #1a2028;
+      --line: #2a3340;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: var(--bg); color: var(--fg); font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; }
+    .deck { height: 100%; overflow: hidden; }
+    .slide {
+      display: none;
+      height: 100%;
+      padding: clamp(2rem, 5vw, 4.5rem);
+      flex-direction: column;
+      justify-content: center;
+    }
+    .slide.active { display: flex; }
+    .kicker { color: var(--accent); font-size: 0.85rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 0.75rem; }
+    h1 { font-size: clamp(2.4rem, 6vw, 4rem); font-weight: 700; line-height: 1.1; margin-bottom: 1rem; }
+    h2 { font-size: clamp(2rem, 4.5vw, 3rem); font-weight: 700; line-height: 1.15; margin-bottom: 1.25rem; }
+    .lead { font-size: clamp(1.1rem, 2.2vw, 1.45rem); color: var(--muted); max-width: 42rem; line-height: 1.45; }
+    .products { margin-top: 2.5rem; color: var(--accent); font-size: 1.1rem; letter-spacing: 0.04em; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-top: 1.5rem; max-width: 56rem; }
+    @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+    .col h3 { color: var(--accent); font-size: 0.85rem; letter-spacing: 0.06em; margin-bottom: 0.75rem; }
+    ul { list-style: none; }
+    ul li { font-size: clamp(1rem, 1.8vw, 1.25rem); padding: 0.45rem 0; border-bottom: 1px solid var(--line); color: var(--fg); }
+    ul li:last-child { border-bottom: 0; }
+    .row { display: grid; grid-template-columns: 8rem 1fr; gap: 1rem; align-items: baseline; padding: 0.7rem 0; border-bottom: 1px solid var(--line); max-width: 52rem; }
+    .row .name { color: var(--accent); font-weight: 700; font-size: 1.15rem; }
+    .row .desc { font-size: 1.15rem; }
+    .steps li { font-size: clamp(1.05rem, 2vw, 1.35rem); padding: 0.55rem 0; border-bottom: 1px solid var(--line); }
+    .center { text-align: center; align-items: center; }
+    .nav {
+      position: fixed; bottom: 1.25rem; right: 1.5rem;
+      color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums;
+    }
+    .hint {
+      position: fixed; bottom: 1.25rem; left: 1.5rem;
+      color: var(--muted); font-size: 0.75rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="deck" id="deck">
+    <section class="slide active">
+      <div class="kicker">SaaS Labs</div>
+      <h1>PyAI Suite</h1>
+      <p class="lead">Four AI products on one voice platform — PyAI first, with clear fallbacks.</p>
+      <p class="products">CallIQ · Scrib · Brief · Simulator</p>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Before demos</div>
+      <h2>Built vs pulled in</h2>
+      <div class="grid2">
+        <div class="col">
+          <h3>We built</h3>
+          <ul>
+            <li>CallIQ · Scrib · Brief · Simulator</li>
+            <li>Provider registry &amp; visible fallbacks</li>
+            <li>API, web, extension, desktop tray</li>
+            <li>Recap · cleanup · meeting memory · scoring</li>
+          </ul>
+        </div>
+        <div class="col">
+          <h3>We pulled in</h3>
+          <ul>
+            <li>PyAI Hear / Speak</li>
+            <li>OpenAI / Gemini adapters</li>
+            <li>Attendee (open-source Meet bot)</li>
+            <li>Postgres · Redis · MinIO · Docker</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Products</div>
+      <h2>One line each</h2>
+      <div class="row"><span class="name">CallIQ</span><span class="desc">Sales call → evidence-backed deal notes</span></div>
+      <div class="row"><span class="name">Scrib</span><span class="desc">Speak → cleaned text ready to paste</span></div>
+      <div class="row"><span class="name">Brief</span><span class="desc">Meeting → notes + searchable memory</span></div>
+      <div class="row"><span class="name">Simulator</span><span class="desc">Practice / stress-test a live voice agent</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Tech stack</div>
+      <h2>What powers the demos</h2>
+      <ul class="steps">
+        <li>PyAI — Hear (STT) · Speak (TTS) · primary path</li>
+        <li>Fallbacks — OpenAI · Gemini · Mock when no keys</li>
+        <li>Attendee — CallIQ Bot joins Google Meet / Zoom</li>
+        <li>Infra — Postgres · Redis · MinIO · Docker Compose</li>
+        <li>Apps — React · Fastify · Chrome extension · Tauri tray</li>
+      </ul>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Live demo</div>
+      <h2>Click path (~12–15 min)</h2>
+      <ul class="steps">
+        <li>0 — Built vs pulled in (20 sec)</li>
+        <li>1 — CallIQ → <strong>Run product demo</strong> (4–5 min)</li>
+        <li>2 — Scrib → <strong>Try demo</strong> (2 min)</li>
+        <li>3 — Brief → <strong>Try sample demo</strong> (2–3 min)</li>
+        <li>4 — Simulator → <strong>Start call</strong> (2 min)</li>
+        <li>5 — Providers → health + fallbacks (30 sec)</li>
+        <li>Open http://localhost:3000</li>
+      </ul>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Featured</div>
+      <h2>CallIQ</h2>
+      <p class="lead">Listen → Hear → Recap. CRM-ready notes grounded in the call.</p>
+      <ul class="steps" style="margin-top:1.5rem">
+        <li>Click <strong>Run product demo</strong></li>
+        <li>Show transcript · conversation shape · summary / risks / next steps</li>
+        <li>Optional: Join Meet as bot — admit <strong>CallIQ Bot</strong> once</li>
+      </ul>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Also on the suite</div>
+      <h2>Scrib · Brief · Simulator</h2>
+      <ul class="steps">
+        <li><strong>Scrib</strong> — Try demo · Speak → Hear → cleanup → paste-ready</li>
+        <li><strong>Brief</strong> — Sample demo · or tab + mic → End meeting → notes</li>
+        <li><strong>Simulator</strong> — Start a call · score before customers hear it</li>
+      </ul>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Stagecraft</div>
+      <h2>If something fails</h2>
+      <ul class="steps">
+        <li>Stay on Mock / sample demo paths</li>
+        <li>Healthy key ≠ Hear always wins (cooldown / fallback banners)</li>
+        <li>Fallback banner = expected, not broken</li>
+        <li>Skip live Meet — finish on CallIQ product demo</li>
+      </ul>
+    </section>
+
+    <section class="slide center">
+      <h1>One voice platform.<br />PyAI first.</h1>
+      <p class="products">CallIQ · Scrib · Brief · Simulator</p>
+      <p class="lead" style="margin-top:2rem">Questions?</p>
+    </section>
+  </div>
+  <div class="hint">← → or Space · F fullscreen</div>
+  <div class="nav" id="nav">1 / 9</div>
+  <script>
+    const slides = [...document.querySelectorAll(".slide")];
+    let i = 0;
+    function show(n) {
+      i = (n + slides.length) % slides.length;
+      slides.forEach((s, idx) => s.classList.toggle("active", idx === i));
+      document.getElementById("nav").textContent = `${i + 1} / ${slides.length}`;
+    }
+    window.addEventListener("keydown", (e) => {
+      if (["ArrowRight", "PageDown", " ", "Enter"].includes(e.key)) { e.preventDefault(); show(i + 1); }
+      if (["ArrowLeft", "PageUp", "Backspace"].includes(e.key)) { e.preventDefault(); show(i - 1); }
+      if (e.key === "Home") show(0);
+      if (e.key === "End") show(slides.length - 1);
+      if (e.key === "f" || e.key === "F") {
+        if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+        else document.exitFullscreen?.();
+      }
+    });
+  </script>
+</body>
+</html>

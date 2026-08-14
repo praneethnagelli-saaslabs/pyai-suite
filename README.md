@@ -241,6 +241,8 @@ docs/             Deeper docs
 
 - [Sample recordings](samples/README.md)
 - [Pitch + demo (all products)](docs/pitch-pyai-suite.md)
+- [Demo slides (HTML)](docs/demo-deck.html) — open in browser, ←/→, `F` fullscreen
+- [Demo slides (PowerPoint)](docs/PyAI-Suite-Demo.pptx)
 - [Architecture](docs/architecture.md)
 - [Providers (PyAI)](docs/providers.md)
 - [Security](docs/security.md)
