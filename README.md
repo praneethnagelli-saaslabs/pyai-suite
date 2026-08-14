@@ -221,6 +221,7 @@ docs/             Deeper docs
 
 ## More docs
 
+- [Pitch + demo (all products)](docs/pitch-pyai-suite.md)
 - [Architecture](docs/architecture.md)
 - [Providers (PyAI)](docs/providers.md)
 - [Security](docs/security.md)
