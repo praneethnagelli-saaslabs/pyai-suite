@@ -103,6 +103,22 @@ Open http://localhost:3000 first.
 | Fast demo (no real Meet) | **CallIQ** → **Run product demo** |
 | Real Meet with a bot | **CallIQ** → paste Meet link → **Join Meet as bot** → in Meet **admit CallIQ Bot once** |
 | Upload a recording | **CallIQ** → upload audio → wait for Hear + recap |
+| Upload a local sample | Use a file from [`samples/`](samples/) (see below) |
+
+### Sample recordings (repo)
+
+Ready-to-upload files live in [`samples/`](samples/):
+
+| File | Use |
+|------|-----|
+| `samples/calliq-sample-sales-call.mp3` | Short (~33s) CallIQ sales-call demo |
+| `samples/mba-ai-inquiry.wav` | ~32 min · MBA with AI specialization inquiry |
+| `samples/follow-up-rachel.wav` | ~30 min · Follow-up (Rachel) |
+| `samples/bs-ai-business-inquiry.wav` | ~19 min · B.S. AI for Business inquiry |
+| `samples/mba-ai-reinquiry.wav` | ~21 min · MBA AI re-inquiry / preference change |
+| `samples/admission-credit-transfer.wav` | ~19 min · Admission + credit transfer |
+
+Details: [samples/README.md](samples/README.md)
 
 Bot admin UI (only if you need to poke Attendee directly):
 
@@ -138,6 +154,7 @@ Chrome shortcut (extension loaded): hold **Control+Shift+1**, speak, release to 
 | Sample meeting | **Brief** → sample / demo |
 | Live Meet (no bot) | **Brief** → **Capture Meet** → share the **Meet Chrome Tab** + turn on **Also share tab audio** → **End meeting → notes** |
 | Upload a file | **Brief** → upload recording → notes + optional playback |
+| Upload a local sample | Use a file from [`samples/`](samples/) (e.g. `mba-ai-inquiry.wav`) |
 | Past meetings | **Brief** → pick a meeting in the left list |
 | Search memory | **Brief** → type a question in search |
 
@@ -214,6 +231,7 @@ apps/desktop      macOS tray Scrib
 apps/worker       Background jobs
 products/*        CallIQ, Scrib, Brief, Simulator logic
 packages/core     Shared AI platform (PyAI first)
+samples/          Sample call / meeting audio for uploads
 docs/             Deeper docs
 ```
 
@@ -221,6 +239,7 @@ docs/             Deeper docs
 
 ## More docs
 
+- [Sample recordings](samples/README.md)
 - [Pitch + demo (all products)](docs/pitch-pyai-suite.md)
 - [Architecture](docs/architecture.md)
 - [Providers (PyAI)](docs/providers.md)
