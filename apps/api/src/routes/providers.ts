@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { AppServices } from "../services.js";
 import { Capability, mintPyAISandboxKey, PyAIProvider, PYAI_DEFAULT_BASE_URL } from "@pyai/core";
+import { getPyaiHearCooldown } from "../providerPick.js";
 
 /** Providers + models + health + routing — the registry surface (spec #6, #67, #68). */
 export async function providersRoutes(app: FastifyInstance, svc: AppServices): Promise<void> {
@@ -22,7 +23,7 @@ export async function providersRoutes(app: FastifyInstance, svc: AppServices): P
   app.get("/api/providers/health", async () => {
     const ids = svc.platform.registry.list().map((p: { id: string }) => p.id);
     const health = await Promise.all(ids.map(async (id) => ({ id, ...(await svc.platform.registry.health(id)) })));
-    return { health };
+    return { health, hear: { pyai: getPyaiHearCooldown() } };
   });
 
   app.get("/api/capabilities", async () => {

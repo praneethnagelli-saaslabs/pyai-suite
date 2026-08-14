@@ -74,21 +74,24 @@ fn set_tray(app: &AppHandle, text: &str) {
     });
 }
 
-/// Points from the bottom of the screen that are covered by the Dock (0 if Dock is on a side).
+/// Points from the top of the screen covered by the menu bar (notch / status area).
 #[cfg(target_os = "macos")]
-fn dock_bottom_inset() -> f64 {
+fn menu_bar_top_inset() -> f64 {
     use objc2::MainThreadMarker;
     use objc2_app_kit::NSScreen;
     let Some(mtm) = MainThreadMarker::new() else {
-        return 80.0;
+        return 28.0;
     };
     NSScreen::mainScreen(mtm)
         .map(|screen| {
             let frame = screen.frame();
             let visible = screen.visibleFrame();
-            (visible.origin.y - frame.origin.y).max(0.0)
+            // Cocoa: origin is bottom-left, y grows up.
+            let frame_top = frame.origin.y + frame.size.height;
+            let visible_top = visible.origin.y + visible.size.height;
+            (frame_top - visible_top).max(0.0)
         })
-        .unwrap_or(80.0)
+        .unwrap_or(28.0)
 }
 
 fn place_bezel(w: &WebviewWindow) {
@@ -100,13 +103,14 @@ fn place_bezel(w: &WebviewWindow) {
         let screen = monitor.size().to_logical::<f64>(scale);
         let width = 448.0;
         let height = 88.0;
-        let gap = 20.0;
+        let gap = 12.0;
         #[cfg(target_os = "macos")]
-        let inset = dock_bottom_inset();
+        let inset = menu_bar_top_inset();
         #[cfg(not(target_os = "macos"))]
         let inset = 0.0;
         let x = origin.x + (screen.width - width) / 2.0;
-        let y = origin.y + screen.height - height - inset - gap;
+        // Just below the menu bar (top of the usable screen).
+        let y = origin.y + inset + gap;
         let _ = w.set_size(tauri::LogicalSize::new(width, height));
         let _ = w.set_position(LogicalPosition::new(x, y));
     } else {

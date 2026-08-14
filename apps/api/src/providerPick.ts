@@ -66,6 +66,18 @@ export interface TranscribeFallbackResult {
   fallbackNote?: string;
 }
 
+export type SttMode = "live" | "batch";
+
+export interface TranscribeFallbackOpts {
+  includeMock?: boolean;
+  /**
+   * `live` — Meet/mic chunks: short Hear budget.
+   * `batch` — uploads/demos: long Hear budget.
+   * Cooldown after a Hear miss applies to both.
+   */
+  mode?: SttMode;
+}
+
 /** Shared copy for UI banners when a later provider was used. */
 export function providerFallbackNote(used: string, errors: string[]): string | undefined {
   if (!errors.length) return undefined;
@@ -74,16 +86,43 @@ export function providerFallbackNote(used: string, errors: string[]): string | u
   return `Fell back to ${used} — ${first}${more}`;
 }
 
-/** Hear batch can sit for minutes; live Meet chunks cannot wait that long. */
-const PYAI_STT_BUDGET_MS = 8_000;
+/** Live Meet chunks cannot wait minutes for Hear. */
+const PYAI_LIVE_BUDGET_MS = 8_000;
+/** Uploads / demos get a full Hear attempt. */
+const PYAI_BATCH_BUDGET_MS = 90_000;
 const OTHER_STT_BUDGET_MS = 90_000;
 const PYAI_COOLDOWN_MS = 3 * 60_000;
 
 let pyaiSkipUntil = 0;
+let pyaiSkipReason = "";
 
 /** Test helper — do not call from product code. */
 export function resetSttCooldowns(): void {
   pyaiSkipUntil = 0;
+  pyaiSkipReason = "";
+}
+
+/** Exposed for Providers UI — healthy key can still be skipped for live Hear. */
+export function getPyaiHearCooldown(): {
+  active: boolean;
+  skipUntil: number;
+  remainingMs: number;
+  reason?: string;
+  liveBudgetMs: number;
+  batchBudgetMs: number;
+  cooldownMs: number;
+} {
+  const now = Date.now();
+  const remainingMs = Math.max(0, pyaiSkipUntil - now);
+  return {
+    active: remainingMs > 0,
+    skipUntil: pyaiSkipUntil,
+    remainingMs,
+    reason: remainingMs > 0 ? pyaiSkipReason || "recent Hear miss" : undefined,
+    liveBudgetMs: PYAI_LIVE_BUDGET_MS,
+    batchBudgetMs: PYAI_BATCH_BUDGET_MS,
+    cooldownMs: PYAI_COOLDOWN_MS,
+  };
 }
 
 async function withBudget<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
@@ -103,15 +142,17 @@ async function withBudget<T>(work: Promise<T>, ms: number, label: string): Promi
 /**
  * Try preferred → pyai → openai → gemini (→ mock). Empty transcripts count as
  * failure so a silent Hear miss still falls through to OpenAI.
- * Hear gets a short budget; after a timeout/error it is skipped for a few minutes
- * so OpenAI is not blocked behind a dead Hear job on every chunk.
+ *
+ * Live = short Hear budget; batch = long budget for uploads. After any Hear
+ * timeout/error, skip Hear for a few minutes on *all* subsequent STT calls.
  */
 export async function transcribeWithFallback(
   platform: Platform,
   req: TranscribeFallbackInput,
   preferred?: string,
-  opts?: { includeMock?: boolean },
+  opts?: TranscribeFallbackOpts,
 ): Promise<TranscribeFallbackResult> {
+  const mode: SttMode = opts?.mode === "batch" ? "batch" : "live";
   const candidates = (
     opts?.includeMock === false ? liveCandidates(preferred) : [...liveCandidates(preferred), "mock"]
   ).filter((id, i, arr) => arr.indexOf(id) === i);
@@ -125,7 +166,12 @@ export async function transcribeWithFallback(
     }
     const adapter = platform.registry.getAdapterFor(Capability.BATCH_STT, id);
     if (!adapter?.isConfigured?.() || !adapter.asSTT) continue;
-    const budget = id === "pyai" ? PYAI_STT_BUDGET_MS : OTHER_STT_BUDGET_MS;
+    const budget =
+      id === "pyai"
+        ? mode === "batch"
+          ? PYAI_BATCH_BUDGET_MS
+          : PYAI_LIVE_BUDGET_MS
+        : OTHER_STT_BUDGET_MS;
     try {
       const result = await withBudget(
         adapter.asSTT().transcribe({
@@ -154,7 +200,10 @@ export async function transcribeWithFallback(
     } catch (e) {
       const msg = e instanceof Error ? e.message.slice(0, 160) : "failed";
       errors.push(`${id}: ${msg}`);
-      if (id === "pyai") pyaiSkipUntil = Date.now() + PYAI_COOLDOWN_MS;
+      if (id === "pyai") {
+        pyaiSkipUntil = Date.now() + PYAI_COOLDOWN_MS;
+        pyaiSkipReason = msg;
+      }
     }
   }
 

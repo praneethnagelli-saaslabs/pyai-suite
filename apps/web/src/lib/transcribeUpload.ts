@@ -73,6 +73,7 @@ export async function transcribeUploadedRecording(
       provider: opts.provider,
       diarize: opts.diarize,
       prompt: opts.prompt,
+      mode: "batch",
     });
     provider = out.provider;
     if (out.fallback) fallback = true;

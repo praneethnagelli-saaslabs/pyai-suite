@@ -616,6 +616,7 @@ export function BriefPage() {
         provider: sttProvider,
         diarize: false,
         speakerLabel,
+        mode: "live",
         prompt:
           "Live Google Meet discussion. Label only Me or Them style turns. Transcribe clear speech only. If silent, return empty.",
       });

@@ -71,4 +71,12 @@ describe("providerPick", () => {
     expect(providerFallbackNote("openai", ["pyai: timeout"])).toMatch(/Fell back to openai/);
     expect(providerFallbackNote("openai", [])).toBeUndefined();
   });
+
+  it("exposes Hear cooldown for Providers UI", async () => {
+    const { getPyaiHearCooldown } = await import("./providerPick.js");
+    const before = getPyaiHearCooldown();
+    expect(before.active).toBe(false);
+    expect(before.liveBudgetMs).toBe(8_000);
+    expect(before.batchBudgetMs).toBe(90_000);
+  });
 });

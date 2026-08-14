@@ -89,7 +89,21 @@ export const api = {
   apiBase: API_BASE,
   health: () => request<{ status: string; providers: string[] }>("/health"),
   providers: () => request<{ providers: ProviderInfo[] }>("/api/providers"),
-  providerHealth: () => request<{ health: ProviderHealth[] }>("/api/providers/health"),
+  providerHealth: () =>
+    request<{
+      health: ProviderHealth[];
+      hear?: {
+        pyai: {
+          active: boolean;
+          skipUntil: number;
+          remainingMs: number;
+          reason?: string;
+          liveBudgetMs: number;
+          batchBudgetMs: number;
+          cooldownMs: number;
+        };
+      };
+    }>("/api/providers/health"),
   capabilities: () => request<{ capabilities: string[] }>("/api/capabilities"),
   runs: (limit = 50) => request<{ runs: RunSummary[] }>(`/api/runs?limit=${limit}`),
   run: (id: string) =>
@@ -113,6 +127,8 @@ export const api = {
     prompt?: string;
     diarize?: boolean;
     speakerLabel?: string;
+    /** live Meet chunks vs batch uploads — default live on the API. */
+    mode?: "live" | "batch";
   }) =>
     request<{
       text: string;
@@ -122,6 +138,7 @@ export const api = {
       fallback?: boolean;
       fallbackNote?: string;
       errors?: string[];
+      mode?: "live" | "batch";
     }>("/api/stt/transcribe", { method: "POST", body: JSON.stringify(body) }),
   analyzeCallIQ: (body: {
     transcriptText?: string;

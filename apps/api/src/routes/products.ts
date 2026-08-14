@@ -155,7 +155,7 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
             svc.platform,
             { audio, format: req.body.audioFormat ?? "mp3" },
             req.body.sttProvider,
-            { includeMock: false },
+            { includeMock: false, mode: "batch" },
           );
           hearMs = Date.now() - tHear;
           raw = heard.text;
@@ -332,7 +332,7 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
         svc.platform,
         { audio, format: req.body.format ?? "wav" },
         req.body.sttProvider,
-        { includeMock: false },
+        { includeMock: false, mode: "batch" },
       );
       sttMs = Date.now() - tHear;
       transcriptText = heard.text;
@@ -549,7 +549,7 @@ export async function productsRoutes(app: FastifyInstance, svc: AppServices): Pr
                 "Me: Thanks for joining. Goal today is the July launch plan.\nThem: Security review is still open.\nTranscribe with Me: and Them: labels when possible.",
             },
             req.body.sttProvider,
-            { includeMock: false },
+            { includeMock: false, mode: "batch" },
           );
           hearMs = Date.now() - tHear;
           sttProvider = heard.provider;

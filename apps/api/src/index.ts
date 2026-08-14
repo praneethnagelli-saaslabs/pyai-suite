@@ -26,7 +26,7 @@ export async function buildServer() {
         svc.platform,
         { audio, format, diarize: true },
         undefined,
-        { includeMock: false },
+        { includeMock: false, mode: "live" },
       );
       const lines = (heard.result.segments ?? [])
         .map((s) => {

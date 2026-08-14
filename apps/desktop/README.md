@@ -1,145 +1,159 @@
 # Desktop — macOS menu-bar Scrib
 
-**Hold Control+Shift+1** to talk, **release** to transcribe and paste. A floating bezel above the Dock shows **Listening** (soft waveform) then **Understanding**. Works in TextEdit, VS Code, Slack, Docs in Chrome, terminals.
-
-This is a **tray-only** Tauri 2 app (spec #70). It does not wrap the web UI. Provider keys stay in the API `.env` — this process never stores or logs them.
+A small **menu-bar** app (no Dock icon). Hold a hotkey, speak, release — cleaned text pastes where your cursor is. The floating bezel appears at the **top**, just below the menu bar.
 
 ```
-Hold Control+Shift+1  → bezel: Listening
-Release               → bezel: Understanding → paste
-Hold again (same app, within 60s) and say “shorter” / “as an email”
-                      → bezel: Editing → Cmd+Z + paste the rewrite
+Hold Control+Shift+1  → Listening
+Release               → Understanding → paste
+Hold again soon       → say “shorter” / “as an email” → rewrite
 ```
 
-## End-to-end setup
+Works in TextEdit, VS Code, Slack, Docs in Chrome, terminals, etc.
 
-### 1. Once per machine
+Provider keys stay in the suite API `.env`. This app never stores or logs them.
+
+---
+
+## What you need
+
+| Need | Why |
+|------|-----|
+| **macOS** | This app is Mac-only |
+| **Rust** | Builds the tray app |
+| **Xcode Command Line Tools** | Compiles native code |
+| **Suite API on port 4000** | Does the Hear + cleanup |
+
+You do **not** need the web UI (`:3000`) for Scrib tray — only the API.
+
+---
+
+## Setup (do once, then daily use)
+
+### 1. Install build tools (once per Mac)
 
 ```bash
-# Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
-
-# Xcode command-line tools (if missing)
-xcode-select --install
+xcode-select --install   # if macOS says tools are missing
 ```
 
-### 2. Suite API (required for transcribe)
+### 2. Start the suite API (required)
 
-Keys stay in repo-root `.env`. In a separate terminal:
+From the **repo root** — pick one:
+
+**Docker (same as main README):**
 
 ```bash
-pnpm --filter @pyai/api dev    # http://127.0.0.1:4000/health
+pnpm docker:sync
+# API must be up: http://127.0.0.1:4000/health
 ```
 
-Docker is fine too, as long as port **4000** is up.
+**Or local API only:**
 
-### 3. Start Scrib
+```bash
+pnpm --filter @pyai/api dev
+```
+
+Keys (optional for Mock; needed for real Hear):
+
+- Put `PYAI_API_KEY` / `OPENAI_API_KEY` in the **repo root** `.env`
+- Restart API after changing keys
+
+### 3. Start Scrib tray
 
 ```bash
 pnpm --filter @pyai/desktop dev
 ```
 
-This builds one official **PyAI Scrib.app** and launches it. You should see **one** menu-bar mic (same Lucide Mic2 as the web UI). Hold Control+Shift+1 and the floating bezel appears above the Dock.
+You should see **one** mic icon in the menu bar.
 
-There is **no Dock icon**. If you see two icons, run `pnpm --filter @pyai/desktop quit` then start again.
+| Command | What it does |
+|---------|----------------|
+| `pnpm --filter @pyai/desktop dev` | Build + launch **PyAI Scrib** (normal use) |
+| `pnpm --filter @pyai/desktop quit` | Quit the tray app |
+| `pnpm --filter @pyai/desktop tauri:dev` | Hot-reload for Rust work (skip for first permissions) |
 
-Hot-reload during Rust work (shows as `pyai-desktop` in TCC — skip this for first-time permissions):
+If you see **two** icons: quit, then start again.
 
-```bash
-pnpm --filter @pyai/desktop tauri:dev
-```
+### 4. Grant macOS permissions (first launch)
 
-### 4. Grant permissions (first launch)
-
-macOS will not list “Scrib”. Enable **PyAI Scrib** in both places:
+macOS will **not** show a product named just “Scrib”. Look for **PyAI Scrib**.
 
 1. **System Settings → Privacy & Security → Accessibility**
-2. Remove **every** **PyAI Scrib** and **pyai-desktop** row (old debug copies do not count)
-3. Click **+** and add **only** this app (Finder highlights it when paste fails):
+2. Remove old **PyAI Scrib** / **pyai-desktop** rows (stale paths break paste)
+3. Click **+** and add:
 
    ```
    ~/Applications/PyAI Scrib.app
-   # Finder → Go → Go to Folder… → ~/Applications
    ```
 
+   Finder → **Go → Go to Folder…** → paste that path
+
 4. **Microphone** → allow **PyAI Scrib**
-5. Quit Scrib and start it again (`pnpm --filter @pyai/desktop quit` then `dev`)
+5. Quit Scrib, start again:
 
-A toggle that is already on is almost always an **old path** (`…/target/debug/macos/…` or a `pyai_desktop-*` hash), not the live app.
+   ```bash
+   pnpm --filter @pyai/desktop quit
+   pnpm --filter @pyai/desktop dev
+   ```
 
-If **PyAI Scrib** is not in the list yet:
+If paste fails but copy works: Accessibility is still pointing at an old app path. Remove all Scrib rows and add `~/Applications/PyAI Scrib.app` again.
 
-1. Click **+** (you may need to unlock with the padlock)
-2. Press **Cmd+Shift+G** and go to `~/Applications`, then choose **PyAI Scrib.app**
-3. Toggle it on
-4. Quit the tray (**Quit Scrib**) and run `pnpm --filter @pyai/desktop dev` again
-
-Also allow **PyAI Scrib** if a mic banner appears on first hold of Control+Shift+1.
-
-Without Accessibility: text is copied, the bezel says **Allow Accessibility**, and System Settings opens. Press **Cmd+V** this time; after you toggle **PyAI Scrib** on, the next dictate pastes at the caret.
+Without Accessibility, the bezel says **Allow Accessibility** and text is only on the clipboard — press **Cmd+V** once.
 
 ### 5. Try it
 
-On launch a floating bezel should flash above the Dock. Then:
+1. Click into TextEdit (or Slack, VS Code, …)
+2. **Hold Control+Shift+1** → speak
+3. **Release** → text pastes
+4. Hold again within ~60s in the same app → say **“make it shorter”** → it rewrites
 
-1. Click the menu-bar mic → **Test bezel** if you want to see it again
-2. Click into TextEdit / VS Code / Slack / a Doc
-3. **Hold Control+Shift+1** — bezel **Listening** with waveform
-4. Speak, **release** — **Understanding**, then paste
-5. Stay in the same app, hold again within a minute — bezel **Editing**. Say **“make it shorter”** — it undoes and pastes the rewrite.
+Menu-bar mic → **Test bezel** if you want to see the floating UI again.
 
-Hotkey uses keyboard HID state (not an Accessibility event tap). Accessibility is only required to auto-press Cmd+V.
+**Quit:** menu-bar → **Quit Scrib**, or `pnpm --filter @pyai/desktop quit`.
 
-**Quit** (no Dock icon — use one of these):
+---
 
-```bash
-pnpm --filter @pyai/desktop quit
-```
+## How paste works
 
-or menu-bar icon → **Quit Scrib**. `pnpm --filter @pyai/desktop dev` starts it again; it does not run in the background after quit.
+Same idea as Wispr Flow when direct insert isn’t available:
 
-## Insert
+1. Save clipboard  
+2. Put transcript on clipboard  
+3. Fake **Cmd+V**  
+4. Restore old clipboard  
 
-Same path Wispr Flow uses when AX insert is unavailable:
+Accessibility is only needed for that Cmd+V. The hotkey itself does not need an Accessibility event tap.
 
-1. Save the current clipboard
-2. Write the transcript
-3. Synthesize **Cmd+V**
-4. Restore the previous clipboard
+---
 
 ## API
 
-Default base is `http://127.0.0.1:4000` (loopback only). Override with `PYAI_API_BASE` if you must point elsewhere — non-localhost is refused unless that env var is set explicitly.
+Default: `http://127.0.0.1:4000` (localhost only).
 
-Each dictate sends the frontmost app name so cleanup can match Slack vs Mail vs VS Code. A second hold within 60s in the same app also sends `lastText` (the previous insert). If you spoke an edit (“make it shorter”), the API returns `action: "refine"` and the tray undoes then pastes.
+Override only if you must: `PYAI_API_BASE=…` (non-localhost is refused unless this is set on purpose).
 
-```json
-{
-  "audioBase64": "…",
-  "format": "wav",
-  "appName": "Slack",
-  "lastText": "Hey can you send this tomorrow"
-}
-```
+Each dictate sends the frontmost app name (Slack vs Mail vs VS Code). A second hold within 60s can send `lastText` so “make it shorter” becomes a refine, not a new paste.
 
-## IPC (spec #70)
+---
 
-[`src/bridge.ts`](src/bridge.ts) is the TypeScript contract. Rust implements the same command names:
+## For developers
+
+TypeScript contract: [`src/bridge.ts`](src/bridge.ts). Rust commands:
 
 | Command | Role |
 |---------|------|
-| `start_capture` / `stop_capture` | cpal → 16-bit mono WAV |
-| `insert_text` | clipboard + Cmd+V + restore |
-| `get_active_app` | `NSWorkspace` frontmost name |
-| `has_provider_key` | always `false` — keys live in the API |
+| `start_capture` / `stop_capture` | Mic → WAV |
+| `insert_text` | Clipboard + Cmd+V |
+| `get_active_app` | Frontmost app name |
+| `has_provider_key` | Always `false` — keys live in the API |
 
-## Out of scope (this slice)
-
-Windows / Linux, Brief system-audio capture, embedding `apps/web`, Keychain provider keys.
+**Not in this app:** Windows/Linux, Brief tab-audio capture, embedding `apps/web`, storing provider keys.
 
 ## Privacy
 
-- Never logs transcripts, audio, or secrets
-- Audio stays in memory until the transcribe POST
-- No provider keys in this binary
+- Does not log transcripts, audio, or secrets  
+- Audio stays in memory until the transcribe request  
+- No provider keys in this binary  
+
+Main suite guide: [../../README.md](../../README.md)

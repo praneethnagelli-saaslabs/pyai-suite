@@ -16,13 +16,21 @@ const ROUTING = [
 
 export function ProvidersPage() {
   const providers = useQuery({ queryKey: ["providers"], queryFn: api.providers });
-  const health = useQuery({ queryKey: ["provider-health"], queryFn: api.providerHealth });
+  const health = useQuery({
+    queryKey: ["provider-health"],
+    queryFn: api.providerHealth,
+    refetchInterval: (q) => (q.state.data?.hear?.pyai?.active ? 5_000 : false),
+  });
   const [sandboxMsg, setSandboxMsg] = useState<string | null>(null);
   const [sandboxErr, setSandboxErr] = useState<string | null>(null);
   const [sandboxBusy, setSandboxBusy] = useState(false);
 
   const healthById = new Map((health.data?.health ?? []).map((h) => [h.id, h]));
   const pyai = providers.data?.providers.find((p) => p.id === "pyai");
+  const hearCooldown = health.data?.hear?.pyai;
+  const hearCooldownSecs = hearCooldown?.active
+    ? Math.max(1, Math.ceil((hearCooldown.remainingMs ?? 0) / 1000))
+    : 0;
 
   async function connectSandbox() {
     setSandboxBusy(true);
@@ -87,8 +95,22 @@ export function ProvidersPage() {
       <section className="panel mb-5 p-4">
         <h2 className="text-sm font-semibold text-ink-900">Living router</h2>
         <p className="mt-1 text-xs text-ink-500">
-          Every request hits this order. The first configured provider that supports the capability wins — you can still override per run.
+          Every request hits this order. The first configured provider that supports the capability wins — you can still
+          override per run. Live Meet Hear uses an 8s budget; uploads get 90s. After a Hear miss, all STT skips Hear for
+          ~3 min (OpenAI fallback) even if Providers still shows healthy.
         </p>
+        {hearCooldown?.active ? (
+          <div
+            role="status"
+            className="mt-3 rounded-lg border border-amber-300/80 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-100"
+          >
+            <span className="font-semibold">PyAI Hear cooldown</span>
+            <span className="mt-0.5 block font-mono text-[11px] leading-snug opacity-90">
+              Healthy key, but Hear is skipped for ~{hearCooldownSecs}s
+              {hearCooldown.reason ? ` — ${hearCooldown.reason}` : ""}. Live and uploads both fall back until it clears.
+            </span>
+          </div>
+        ) : null}
         <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-xs">
           <span className="rounded-full border border-ink-200 px-3 py-1.5 text-ink-600">Request</span>
           <span className="text-ink-300">→</span>
@@ -175,6 +197,16 @@ export function ProvidersPage() {
                         : "Configured"
                       : "Set the matching API key in .env to activate"}
                 </div>
+                {p.id === "pyai" && hearCooldown?.active ? (
+                  <div className="mt-2 rounded-md border border-amber-300/70 bg-amber-50 px-2 py-1.5 font-mono text-[10px] text-amber-950 dark:border-amber-700/50 dark:bg-amber-950/40 dark:text-amber-100">
+                    Hear skipped ~{hearCooldownSecs}s (all STT)
+                    {hearCooldown.reason ? ` · ${hearCooldown.reason}` : ""}
+                  </div>
+                ) : p.id === "pyai" && ready ? (
+                  <div className="mt-2 font-mono text-[10px] text-ink-400">
+                    Hear · live {hearCooldown?.liveBudgetMs ?? 8000}ms · batch {hearCooldown?.batchBudgetMs ?? 90000}ms
+                  </div>
+                ) : null}
               </div>
             );
           })}

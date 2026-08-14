@@ -1,9 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import type { AppServices } from "../services.js";
-import { sttFallbackMessage, transcribeWithFallback } from "../providerPick.js";
+import { sttFallbackMessage, transcribeWithFallback, type SttMode } from "../providerPick.js";
 
 /**
- * Lightweight STT for live Meet / mic chunks. Tries preferred → pyai → openai → gemini.
+ * Lightweight STT for live Meet / mic chunks and batch uploads.
+ * Tries preferred → pyai → openai → gemini.
  * Empty Hear output counts as failure so OpenAI still runs.
  */
 export async function sttRoutes(app: FastifyInstance, svc: AppServices): Promise<void> {
@@ -16,6 +17,8 @@ export async function sttRoutes(app: FastifyInstance, svc: AppServices): Promise
       prompt?: string;
       diarize?: boolean;
       speakerLabel?: string;
+      /** live = Meet chunks (8s Hear); batch = uploads (90s Hear). Default live. */
+      mode?: SttMode;
     };
   }>("/api/stt/transcribe", async (req, reply) => {
     const b64 = req.body.audioBase64 ?? "";
@@ -33,6 +36,7 @@ export async function sttRoutes(app: FastifyInstance, svc: AppServices): Promise
 
     const preferred = req.body.provider;
     const wantDiarize = Boolean(req.body.diarize);
+    const mode: SttMode = req.body.mode === "batch" ? "batch" : "live";
     const t0 = Date.now();
     const prompt =
       req.body.prompt?.trim() ||
@@ -49,7 +53,7 @@ export async function sttRoutes(app: FastifyInstance, svc: AppServices): Promise
           diarize: wantDiarize,
         },
         preferred,
-        { includeMock: false },
+        { includeMock: false, mode },
       );
       let text = heard.text;
       const hasSpeakerLines = /(?:^|\n)\s*(?:\[[^\]]+\]|[A-Za-z][^:\n]{0,48}:)\s+\S/.test(text);
@@ -70,6 +74,7 @@ export async function sttRoutes(app: FastifyInstance, svc: AppServices): Promise
         fallback: heard.fallback,
         fallbackNote: heard.fallbackNote,
         errors: heard.errors.length ? heard.errors : undefined,
+        mode,
       };
     } catch (e) {
       const errors =
